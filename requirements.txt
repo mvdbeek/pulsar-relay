@@ -1,0 +1,30 @@
+# Core Framework
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+# uvloop==0.20.0  # Requires Python <=3.12, optional for performance
+
+# Valkey Client
+valkey-glide==1.2.0
+
+# Data Validation & Serialization
+pydantic==2.10.3
+pydantic-settings==2.6.1
+
+# Monitoring
+prometheus-fastapi-instrumentator==7.0.0
+prometheus-client==0.21.0
+
+# Logging
+structlog==24.4.0
+
+# Development & Testing
+pytest==8.3.4
+pytest-asyncio==0.24.0
+pytest-cov==6.0.0
+httpx==0.27.2
+websockets==13.1
+
+# Code Quality
+black==24.10.0
+ruff==0.8.2
+mypy==1.13.0
