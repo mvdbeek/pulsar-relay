@@ -1,0 +1,103 @@
+name: CI - tox
+
+on: [push, pull_request]
+
+jobs:
+  check:
+    name: lint & mypy (once)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-3.11-${{ hashFiles('**/requirements.txt','**/pyproject.toml','**/tox.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-3.11-
+            ${{ runner.os }}-pip-
+
+      - name: Show Python
+        run: |
+          python --version
+          which python
+
+      - name: Install tox
+        run: pip install --upgrade pip && pip install tox
+
+      - name: Run lint + mypy
+        run: tox -e lint,mypy -vv
+
+  tests:
+    name: pytest matrix
+    needs: check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [ '3.9', '3.10', '3.11', '3.12', '3.13', '3.14' ]
+
+    # Make Valkey available as a service container. The service's port 6379
+    # is published to the runner so tests can connect to localhost:6379.
+    services:
+      valkey:
+        image: valkey/valkey:latest
+        ports:
+          - 6379:6379
+        # Use docker run options to set a sysctl required by Valkey/Redis
+        # and use a Redis-aware healthcheck (redis-cli ping) for faster, more
+        # accurate readiness detection on the runner.
+        options: >-
+          --health-cmd "redis-cli -h localhost -p 6379 ping || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 60
+
+    env:
+      # Enable the integration tests that check for a running Valkey instance
+      VALKEY_INTEGRATION_TEST: '1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('**/requirements.txt','**/pyproject.toml','**/tox.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ matrix.python-version }}-
+            ${{ runner.os }}-pip-
+
+      - name: Cache tox envs
+        uses: actions/cache@v4
+        with:
+          path: .tox
+          key: ${{ runner.os }}-tox-${{ matrix.python-version }}-${{ hashFiles('**/tox.ini','**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-tox-${{ matrix.python-version }}-
+            ${{ runner.os }}-tox-
+
+      - name: Show Python
+        run: |
+          python --version
+          which python
+
+      - name: Install tox
+        run: pip install --upgrade pip && pip install tox
+
+      - name: Run pytest
+        # Run pytest env only
+        run: tox -e pytest

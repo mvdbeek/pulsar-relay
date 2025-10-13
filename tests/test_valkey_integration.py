@@ -7,11 +7,16 @@ Run these tests with: pytest tests/test_valkey_integration.py -v
 """
 
 import asyncio
+import os
 from datetime import datetime, timedelta
 
 import pytest
 
 from app.storage.valkey import ValkeyStorage
+
+pytestmark = pytest.mark.skipif(
+    not os.getenv("VALKEY_INTEGRATION_TEST"), reason="VALKEY_INTEGRATION_TEST environment variable not set"
+)
 
 
 @pytest.fixture
