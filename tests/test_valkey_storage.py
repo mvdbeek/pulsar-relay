@@ -233,7 +233,7 @@ class TestValkeyStorage:
         await valkey_storage.clear()
 
         # Verify all keys were deleted
-        valkey_storage._client.delete.assert_called_once()
+        valkey_storage._client.flushall.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_not_connected_error(self):

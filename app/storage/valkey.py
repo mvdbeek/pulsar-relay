@@ -305,21 +305,7 @@ class ValkeyStorage(StorageBackend):
             raise RuntimeError("Not connected to Valkey")
 
         try:
-            # Find all stream keys
-            cursor = "0"
-            all_keys = []
-
-            while True:
-                cursor, keys = await self._client.scan(cursor, match="stream:topic:*")
-                all_keys.extend(keys)
-                # Handle both bytes and string comparison (SCAN returns bytes)
-                if cursor == "0" or cursor == b"0":
-                    break
-
-            # Delete all stream keys
-            if all_keys:
-                await self._client.delete(all_keys)
-                logger.info(f"Cleared {len(all_keys)} topics from Valkey")
+            await self._client.flushall()
 
         except Exception as e:
             logger.error(f"Failed to clear Valkey data: {e}")
