@@ -449,6 +449,335 @@ class BenchmarkRunner:
 
         return result
 
+    async def benchmark_long_polling_basic(self, num_requests: int = 100) -> BenchmarkResult:
+        """Benchmark basic long polling request/response latency."""
+        print(f"\n📊 Running: Long Polling Basic ({num_requests} requests)")
+
+        latencies = []
+        errors = 0
+
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=35.0) as client:
+            start_time = time.time()
+
+            for i in range(num_requests):
+                poll_start = time.time()
+                try:
+                    response = await client.post(
+                        "/messages/poll",
+                        json={
+                            "topics": [f"poll-topic-{i % 5}"],
+                            "timeout": 1,  # Short timeout for fast benchmark
+                        },
+                    )
+                    response.raise_for_status()
+                    latencies.append(time.time() - poll_start)
+                except Exception as e:
+                    errors += 1
+                    print(f"Error: {e}")
+
+            duration = time.time() - start_time
+
+        result = self.create_result(
+            "Long Polling Basic (1s timeout)",
+            duration,
+            num_requests - errors,
+            latencies,
+            errors,
+        )
+        self.results.append(result)
+        return result
+
+    async def benchmark_long_polling_delivery(
+        self, num_clients: int = 10, messages_per_topic: int = 20
+    ) -> BenchmarkResult:
+        """Benchmark end-to-end message delivery via long polling."""
+        print(f"\n📊 Running: Long Polling Delivery ({num_clients} clients, {messages_per_topic} msgs/topic)")
+
+        latencies = []
+        errors = 0
+        received_count = 0
+
+        async def polling_consumer(client_id: int, topic: str, expected_messages: int):
+            """Consumer that polls for messages."""
+            nonlocal received_count, errors
+
+            last_id = {}
+            messages_received = 0
+
+            try:
+                async with httpx.AsyncClient(base_url=self.base_url, timeout=35.0) as client:
+                    while messages_received < expected_messages:
+                        try:
+                            response = await client.post(
+                                "/messages/poll",
+                                json={
+                                    "topics": [topic],
+                                    "since": last_id if last_id else None,
+                                    "timeout": 5,
+                                },
+                            )
+                            response.raise_for_status()
+                            data = response.json()
+
+                            for msg in data.get("messages", []):
+                                if msg["topic"] == topic:
+                                    # Calculate latency
+                                    sent_at = msg.get("payload", {}).get("sent_at", 0)
+                                    if sent_at:
+                                        latencies.append(time.time() - sent_at)
+
+                                    last_id[topic] = msg["message_id"]
+                                    messages_received += 1
+                                    received_count += 1
+
+                        except asyncio.TimeoutError:
+                            errors += 1
+                            break
+                        except Exception as e:
+                            errors += 1
+                            print(f"Consumer error: {e}")
+                            break
+
+            except Exception as e:
+                errors += 1
+                print(f"Consumer setup error: {e}")
+
+        async def message_producer(topic: str, num_messages: int):
+            """Producer that sends messages."""
+            async with httpx.AsyncClient(base_url=self.base_url) as client:
+                # Small delay to let consumers start polling
+                await asyncio.sleep(0.5)
+
+                for i in range(num_messages):
+                    try:
+                        await client.post(
+                            "/api/v1/messages",
+                            json={
+                                "topic": topic,
+                                "payload": {
+                                    "index": i,
+                                    "sent_at": time.time(),
+                                },
+                            },
+                        )
+                        # Small delay between messages
+                        await asyncio.sleep(0.05)
+                    except Exception as e:
+                        print(f"Producer error: {e}")
+
+        # Create topics
+        topics = [f"poll-delivery-{i}" for i in range(min(5, num_clients))]
+
+        start_time = time.time()
+
+        # Start consumers
+        consumer_tasks = [
+            polling_consumer(i, topics[i % len(topics)], messages_per_topic)
+            for i in range(num_clients)
+        ]
+
+        # Start producers
+        producer_tasks = [message_producer(topic, messages_per_topic) for topic in topics]
+
+        # Wait for all tasks
+        await asyncio.gather(*consumer_tasks, *producer_tasks)
+
+        duration = time.time() - start_time
+
+        result = self.create_result(
+            f"Long Polling Delivery (E2E, {num_clients} clients)",
+            duration,
+            received_count,
+            latencies,
+            errors,
+        )
+        self.results.append(result)
+        return result
+
+    async def benchmark_long_polling_concurrent(self, num_clients: int = 20, timeout: int = 5) -> BenchmarkResult:
+        """Benchmark concurrent long polling clients."""
+        print(f"\n📊 Running: Long Polling Concurrent ({num_clients} concurrent clients)")
+
+        latencies = []
+        errors = 0
+
+        async def concurrent_poller(client_id: int):
+            """Single polling client."""
+            poll_start = time.time()
+            try:
+                async with httpx.AsyncClient(base_url=self.base_url, timeout=timeout + 5.0) as client:
+                    response = await client.post(
+                        "/messages/poll",
+                        json={
+                            "topics": [f"concurrent-poll-{client_id % 10}"],
+                            "timeout": timeout,
+                        },
+                    )
+                    response.raise_for_status()
+                    return time.time() - poll_start, None
+            except Exception as e:
+                return None, str(e)
+
+        start_time = time.time()
+
+        # All clients poll concurrently
+        results = await asyncio.gather(*[concurrent_poller(i) for i in range(num_clients)])
+
+        for latency, error in results:
+            if error:
+                errors += 1
+            else:
+                latencies.append(latency)
+
+        duration = time.time() - start_time
+
+        result = self.create_result(
+            f"Long Polling Concurrent ({num_clients} clients)",
+            duration,
+            num_clients - errors,
+            latencies,
+            errors,
+        )
+        self.results.append(result)
+        return result
+
+    async def benchmark_polling_vs_websocket(self, num_messages: int = 50) -> Dict[str, BenchmarkResult]:
+        """Compare long polling vs WebSocket message delivery."""
+        print(f"\n📊 Running: Long Polling vs WebSocket Comparison ({num_messages} messages each)")
+
+        topic_ws = "comparison-websocket"
+        topic_poll = "comparison-polling"
+
+        # WebSocket benchmark
+        ws_latencies = []
+        ws_errors = 0
+        ws_received = 0
+
+        async def websocket_receiver():
+            nonlocal ws_received, ws_errors
+            try:
+                async with websockets.connect(self.ws_url) as websocket:
+                    await websocket.send(
+                        json.dumps({
+                            "type": "subscribe",
+                            "topics": [topic_ws],
+                            "client_id": "comparison-ws",
+                        })
+                    )
+                    await websocket.recv()  # Wait for confirmation
+
+                    for _ in range(num_messages):
+                        try:
+                            response = await asyncio.wait_for(websocket.recv(), timeout=5.0)
+                            data = json.loads(response)
+                            if data.get("type") == "message":
+                                sent_at = data.get("payload", {}).get("sent_at", 0)
+                                if sent_at:
+                                    ws_latencies.append(time.time() - sent_at)
+                                ws_received += 1
+                        except asyncio.TimeoutError:
+                            ws_errors += 1
+                            break
+            except Exception as e:
+                ws_errors += 1
+                print(f"WebSocket error: {e}")
+
+        # Long polling benchmark
+        poll_latencies = []
+        poll_errors = 0
+        poll_received = 0
+
+        async def polling_receiver():
+            nonlocal poll_received, poll_errors
+            last_id = {}
+            try:
+                async with httpx.AsyncClient(base_url=self.base_url, timeout=35.0) as client:
+                    while poll_received < num_messages:
+                        try:
+                            response = await client.post(
+                                "/messages/poll",
+                                json={
+                                    "topics": [topic_poll],
+                                    "since": last_id if last_id else None,
+                                    "timeout": 5,
+                                },
+                            )
+                            response.raise_for_status()
+                            data = response.json()
+
+                            for msg in data.get("messages", []):
+                                sent_at = msg.get("payload", {}).get("sent_at", 0)
+                                if sent_at:
+                                    poll_latencies.append(time.time() - sent_at)
+                                last_id[msg["topic"]] = msg["message_id"]
+                                poll_received += 1
+                        except asyncio.TimeoutError:
+                            poll_errors += 1
+                            break
+            except Exception as e:
+                poll_errors += 1
+                print(f"Polling error: {e}")
+
+        # Producers
+        async def ws_producer():
+            await asyncio.sleep(0.5)
+            async with httpx.AsyncClient(base_url=self.base_url) as client:
+                for i in range(num_messages):
+                    await client.post(
+                        "/api/v1/messages",
+                        json={
+                            "topic": topic_ws,
+                            "payload": {"index": i, "sent_at": time.time()},
+                        },
+                    )
+                    await asyncio.sleep(0.02)
+
+        async def poll_producer():
+            await asyncio.sleep(0.5)
+            async with httpx.AsyncClient(base_url=self.base_url) as client:
+                for i in range(num_messages):
+                    await client.post(
+                        "/api/v1/messages",
+                        json={
+                            "topic": topic_poll,
+                            "payload": {"index": i, "sent_at": time.time()},
+                        },
+                    )
+                    await asyncio.sleep(0.02)
+
+        # Run both benchmarks
+        ws_start = time.time()
+        await asyncio.gather(websocket_receiver(), ws_producer())
+        ws_duration = time.time() - ws_start
+
+        poll_start = time.time()
+        await asyncio.gather(polling_receiver(), poll_producer())
+        poll_duration = time.time() - poll_start
+
+        # Create results
+        ws_result = self.create_result(
+            "WebSocket Delivery (comparison)",
+            ws_duration,
+            ws_received,
+            ws_latencies,
+            ws_errors,
+        )
+
+        poll_result = self.create_result(
+            "Long Polling Delivery (comparison)",
+            poll_duration,
+            poll_received,
+            poll_latencies,
+            poll_errors,
+        )
+
+        self.results.extend([ws_result, poll_result])
+
+        print(f"\n   📊 WebSocket: {len(ws_latencies)} msgs, avg {ws_result.avg_latency*1000:.2f}ms")
+        print(f"   📊 Polling:   {len(poll_latencies)} msgs, avg {poll_result.avg_latency*1000:.2f}ms")
+
+        return {"websocket": ws_result, "polling": poll_result}
+
     def print_result(self, result: BenchmarkResult):
         """Print a single benchmark result."""
         print(f"\n{'=' * 70}")
@@ -503,6 +832,7 @@ class BenchmarkRunner:
 
         # Run benchmarks
         try:
+            # HTTP ingestion benchmarks
             await self.benchmark_message_ingestion(num_messages=1000)
             self.print_result(self.results[-1])
 
@@ -512,6 +842,7 @@ class BenchmarkRunner:
             await self.benchmark_concurrent_ingestion(num_messages=1000, concurrency=20)
             self.print_result(self.results[-1])
 
+            # WebSocket benchmarks
             await self.benchmark_websocket_subscribe(num_clients=50)
             self.print_result(self.results[-1])
 
@@ -520,6 +851,21 @@ class BenchmarkRunner:
 
             await self.benchmark_broadcast_performance(num_clients=30, num_messages=50)
             self.print_result(self.results[-1])
+
+            # Long polling benchmarks
+            await self.benchmark_long_polling_basic(num_requests=100)
+            self.print_result(self.results[-1])
+
+            await self.benchmark_long_polling_concurrent(num_clients=20, timeout=2)
+            self.print_result(self.results[-1])
+
+            await self.benchmark_long_polling_delivery(num_clients=10, messages_per_topic=20)
+            self.print_result(self.results[-1])
+
+            # Comparison benchmark
+            await self.benchmark_polling_vs_websocket(num_messages=50)
+            self.print_result(self.results[-2])  # WebSocket result
+            self.print_result(self.results[-1])  # Polling result
 
         except KeyboardInterrupt:
             print("\n⚠️  Benchmark interrupted by user")
