@@ -20,10 +20,12 @@ class TestMemoryStorage:
             "msg_1",
             "test-topic",
             {"data": "value1"},
-            datetime.datetime.now(datetime.UTC),
+            datetime.datetime.now(datetime.timezone.utc),
             {"key": "value"},
         )
-        await storage.save_message("msg_2", "test-topic", {"data": "value2"}, datetime.datetime.now(datetime.UTC))
+        await storage.save_message(
+            "msg_2", "test-topic", {"data": "value2"}, datetime.datetime.now(datetime.timezone.utc)
+        )
 
         # Retrieve messages
         messages = await storage.get_messages("test-topic")
@@ -41,7 +43,9 @@ class TestMemoryStorage:
 
         # Save multiple messages
         for i in range(5):
-            await storage.save_message(f"msg_{i}", "test-topic", {"index": i}, datetime.datetime.now(datetime.UTC))
+            await storage.save_message(
+                f"msg_{i}", "test-topic", {"index": i}, datetime.datetime.now(datetime.timezone.utc)
+            )
 
         # Get with limit
         messages = await storage.get_messages("test-topic", limit=3)
@@ -56,7 +60,9 @@ class TestMemoryStorage:
 
         # Save messages
         for i in range(5):
-            await storage.save_message(f"msg_{i}", "test-topic", {"index": i}, datetime.datetime.now(datetime.UTC))
+            await storage.save_message(
+                f"msg_{i}", "test-topic", {"index": i}, datetime.datetime.now(datetime.timezone.utc)
+            )
 
         # Get messages since msg_2
         messages = await storage.get_messages("test-topic", since="msg_2")
@@ -79,7 +85,9 @@ class TestMemoryStorage:
 
         # Save 10 messages
         for i in range(10):
-            await storage.save_message(f"msg_{i}", "test-topic", {"index": i}, datetime.datetime.now(datetime.UTC))
+            await storage.save_message(
+                f"msg_{i}", "test-topic", {"index": i}, datetime.datetime.now(datetime.timezone.utc)
+            )
 
         # Trim to 5 messages
         removed = await storage.trim_topic("test-topic", 5)
@@ -98,7 +106,9 @@ class TestMemoryStorage:
 
         # Save 3 messages
         for i in range(3):
-            await storage.save_message(f"msg_{i}", "test-topic", {"index": i}, datetime.datetime.now(datetime.UTC))
+            await storage.save_message(
+                f"msg_{i}", "test-topic", {"index": i}, datetime.datetime.now(datetime.timezone.utc)
+            )
 
         # Try to trim to 10 messages
         removed = await storage.trim_topic("test-topic", 10)
@@ -112,10 +122,10 @@ class TestMemoryStorage:
 
         assert await storage.get_topic_length("test-topic") == 0
 
-        await storage.save_message("msg_1", "test-topic", {"data": 1}, datetime.datetime.now(datetime.UTC))
+        await storage.save_message("msg_1", "test-topic", {"data": 1}, datetime.datetime.now(datetime.timezone.utc))
         assert await storage.get_topic_length("test-topic") == 1
 
-        await storage.save_message("msg_2", "test-topic", {"data": 2}, datetime.datetime.now(datetime.UTC))
+        await storage.save_message("msg_2", "test-topic", {"data": 2}, datetime.datetime.now(datetime.timezone.utc))
         assert await storage.get_topic_length("test-topic") == 2
 
     async def test_max_messages_per_topic(self):
@@ -124,7 +134,9 @@ class TestMemoryStorage:
 
         # Save 10 messages
         for i in range(10):
-            await storage.save_message(f"msg_{i}", "test-topic", {"index": i}, datetime.datetime.now(datetime.UTC))
+            await storage.save_message(
+                f"msg_{i}", "test-topic", {"index": i}, datetime.datetime.now(datetime.timezone.utc)
+            )
 
         # Should only have last 5 messages
         length = await storage.get_topic_length("test-topic")
@@ -138,9 +150,9 @@ class TestMemoryStorage:
         """Test storing messages in multiple topics."""
         storage = MemoryStorage()
 
-        await storage.save_message("msg_1", "topic1", {"data": 1}, datetime.datetime.now(datetime.UTC))
-        await storage.save_message("msg_2", "topic2", {"data": 2}, datetime.datetime.now(datetime.UTC))
-        await storage.save_message("msg_3", "topic1", {"data": 3}, datetime.datetime.now(datetime.UTC))
+        await storage.save_message("msg_1", "topic1", {"data": 1}, datetime.datetime.now(datetime.timezone.utc))
+        await storage.save_message("msg_2", "topic2", {"data": 2}, datetime.datetime.now(datetime.timezone.utc))
+        await storage.save_message("msg_3", "topic1", {"data": 3}, datetime.datetime.now(datetime.timezone.utc))
 
         topic1_messages = await storage.get_messages("topic1")
         topic2_messages = await storage.get_messages("topic2")
@@ -164,8 +176,8 @@ class TestMemoryStorage:
         """Test clearing all messages."""
         storage = MemoryStorage()
 
-        await storage.save_message("msg_1", "topic1", {"data": 1}, datetime.datetime.now(datetime.UTC))
-        await storage.save_message("msg_2", "topic2", {"data": 2}, datetime.datetime.now(datetime.UTC))
+        await storage.save_message("msg_1", "topic1", {"data": 1}, datetime.datetime.now(datetime.timezone.utc))
+        await storage.save_message("msg_2", "topic2", {"data": 2}, datetime.datetime.now(datetime.timezone.utc))
 
         await storage.clear()
 

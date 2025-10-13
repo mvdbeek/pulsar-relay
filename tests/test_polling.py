@@ -146,7 +146,7 @@ class TestPollManager:
         waiter = await poll_manager.create_waiter(["topic1"])
 
         # Manually set created_at to past
-        waiter.created_at = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=400)
+        waiter.created_at = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=400)
 
         # Cleanup with 300 second max age
         removed = await poll_manager.cleanup_stale_waiters(max_age_seconds=300)
@@ -248,9 +248,15 @@ class TestPollingEndpoint:
         """Test polling with since parameter for pagination."""
 
         # Save multiple messages
-        await test_storage.save_message("msg_1", "test-topic", {"index": 1}, datetime.datetime.now(datetime.UTC))
-        await test_storage.save_message("msg_2", "test-topic", {"index": 2}, datetime.datetime.now(datetime.UTC))
-        await test_storage.save_message("msg_3", "test-topic", {"index": 3}, datetime.datetime.now(datetime.UTC))
+        await test_storage.save_message(
+            "msg_1", "test-topic", {"index": 1}, datetime.datetime.now(datetime.timezone.utc)
+        )
+        await test_storage.save_message(
+            "msg_2", "test-topic", {"index": 2}, datetime.datetime.now(datetime.timezone.utc)
+        )
+        await test_storage.save_message(
+            "msg_3", "test-topic", {"index": 3}, datetime.datetime.now(datetime.timezone.utc)
+        )
 
         # Poll with since=msg_1 (should get msg_2 and msg_3)
         response = test_client.post(

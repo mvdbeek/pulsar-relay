@@ -83,7 +83,7 @@ class TestMessageResponse:
 
     def test_valid_response(self):
         """Test creating a valid message response."""
-        timestamp = datetime.datetime.now(datetime.UTC)
+        timestamp = datetime.datetime.now(datetime.timezone.utc)
         resp = MessageResponse(message_id="msg_abc123", topic="notifications", timestamp=timestamp)
 
         assert resp.message_id == "msg_abc123"
