@@ -6,10 +6,10 @@ Start Valkey with: docker run -d -p 6379:6379 valkey/valkey:latest
 Run these tests with: pytest tests/test_valkey_integration.py -v
 """
 
-import pytest
 import asyncio
 from datetime import datetime, timedelta
-from typing import List
+
+import pytest
 
 from app.storage.valkey import ValkeyStorage
 
@@ -33,7 +33,7 @@ async def valkey_storage():
         # Cleanup after tests
         try:
             await storage.clear()
-        except:
+        except Exception:
             pass
         await storage.disconnect()
 
@@ -159,9 +159,7 @@ class TestValkeyIntegrationPagination:
 
         # Get second page using last stream ID
         last_stream_id = page1[-1]["stream_id"]
-        page2 = await valkey_storage.get_messages(
-            "pagination-test", since=last_stream_id, limit=10
-        )
+        page2 = await valkey_storage.get_messages("pagination-test", since=last_stream_id, limit=10)
         assert len(page2) == 10
         assert page2[0]["payload"]["index"] == 10
         assert page2[9]["payload"]["index"] == 19

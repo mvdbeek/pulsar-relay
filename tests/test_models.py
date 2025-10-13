@@ -6,11 +6,11 @@ import pytest
 from pydantic import ValidationError
 
 from app.models import (
+    BulkMessageRequest,
     Message,
     MessageResponse,
-    WebSocketSubscribe,
     WebSocketAck,
-    BulkMessageRequest,
+    WebSocketSubscribe,
 )
 
 
@@ -84,9 +84,7 @@ class TestMessageResponse:
     def test_valid_response(self):
         """Test creating a valid message response."""
         timestamp = datetime.datetime.now(datetime.UTC)
-        resp = MessageResponse(
-            message_id="msg_abc123", topic="notifications", timestamp=timestamp
-        )
+        resp = MessageResponse(message_id="msg_abc123", topic="notifications", timestamp=timestamp)
 
         assert resp.message_id == "msg_abc123"
         assert resp.topic == "notifications"
@@ -98,9 +96,7 @@ class TestWebSocketSubscribe:
 
     def test_valid_subscribe(self):
         """Test creating a valid subscribe message."""
-        sub = WebSocketSubscribe(
-            type="subscribe", topics=["notifications", "alerts"], client_id="client_123"
-        )
+        sub = WebSocketSubscribe(type="subscribe", topics=["notifications", "alerts"], client_id="client_123")
 
         assert sub.type == "subscribe"
         assert sub.topics == ["notifications", "alerts"]

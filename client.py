@@ -1,9 +1,11 @@
 import asyncio
 import json
 import os
+
 import websockets
 
 PROXY_FQDN = os.getenv("PROXY_FQDN", "localhost:8088")
+
 
 async def consume_messages():
     uri = f"ws://{PROXY_FQDN}/ws"

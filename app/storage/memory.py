@@ -2,8 +2,8 @@
 
 import asyncio
 from collections import defaultdict, deque
-from typing import Dict, Any, List, Optional
 from datetime import datetime
+from typing import Any, Optional
 
 from app.storage.base import StorageBackend
 
@@ -17,7 +17,7 @@ class MemoryStorage(StorageBackend):
         Args:
             max_messages_per_topic: Maximum messages to store per topic
         """
-        self._messages: Dict[str, deque] = defaultdict(lambda: deque(maxlen=max_messages_per_topic))
+        self._messages: dict[str, deque] = defaultdict(lambda: deque(maxlen=max_messages_per_topic))
         self._lock = asyncio.Lock()
         self._max_messages = max_messages_per_topic
 
@@ -25,9 +25,9 @@ class MemoryStorage(StorageBackend):
         self,
         message_id: str,
         topic: str,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         timestamp: datetime,
-        metadata: Optional[Dict[str, str]] = None,
+        metadata: Optional[dict[str, str]] = None,
     ) -> None:
         """Save a message to in-memory storage."""
         async with self._lock:
@@ -40,9 +40,7 @@ class MemoryStorage(StorageBackend):
             }
             self._messages[topic].append(message)
 
-    async def get_messages(
-        self, topic: str, since: Optional[str] = None, limit: int = 10
-    ) -> List[Dict[str, Any]]:
+    async def get_messages(self, topic: str, since: Optional[str] = None, limit: int = 10) -> list[dict[str, Any]]:
         """Get messages from a topic.
 
         Args:
@@ -63,9 +61,7 @@ class MemoryStorage(StorageBackend):
             if since:
                 try:
                     # Find the index of the since message
-                    since_idx = next(
-                        i for i, msg in enumerate(messages) if msg["message_id"] == since
-                    )
+                    since_idx = next(i for i, msg in enumerate(messages) if msg["message_id"] == since)
                     # Return messages after the since message
                     messages = messages[since_idx + 1 :]
                 except StopIteration:

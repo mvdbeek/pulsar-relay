@@ -1,12 +1,12 @@
 """Valkey-based storage backend using Streams."""
 
+import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
-import json
+from typing import Any, Optional
 
 from glide import GlideClient, GlideClientConfiguration, NodeAddress
-from glide.async_commands.stream import TrimByMaxLen, IdBound, ExclusiveIdBound, MinId, MaxId
+from glide.async_commands.stream import ExclusiveIdBound, MaxId, MinId, TrimByMaxLen
 
 from app.storage.base import StorageBackend
 
@@ -96,9 +96,9 @@ class ValkeyStorage(StorageBackend):
         self,
         message_id: str,
         topic: str,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         timestamp: datetime,
-        metadata: Optional[Dict[str, str]] = None,
+        metadata: Optional[dict[str, str]] = None,
     ) -> None:
         """Save a message to Valkey Stream.
 
@@ -138,17 +138,13 @@ class ValkeyStorage(StorageBackend):
                 TrimByMaxLen(exact=True, threshold=self.max_messages_per_topic),
             )
 
-            logger.debug(
-                f"Saved message {message_id} to topic {topic} with stream ID {stream_entry_id}"
-            )
+            logger.debug(f"Saved message {message_id} to topic {topic} with stream ID {stream_entry_id}")
 
         except Exception as e:
             logger.error(f"Failed to save message to Valkey: {e}")
             raise
 
-    async def get_messages(
-        self, topic: str, since: Optional[str] = None, limit: int = 10
-    ) -> List[Dict[str, Any]]:
+    async def get_messages(self, topic: str, since: Optional[str] = None, limit: int = 10) -> list[dict[str, Any]]:
         """Retrieve messages from Valkey Stream.
 
         Args:
@@ -171,9 +167,7 @@ class ValkeyStorage(StorageBackend):
 
             # XRANGE returns messages from start to end
             # MaxId() means to the end of the stream
-            stream_entries = await self._client.xrange(
-                stream_key, start=start_bound, end=MaxId(), count=limit
-            )
+            stream_entries = await self._client.xrange(stream_key, start=start_bound, end=MaxId(), count=limit)
 
             messages = []
             if stream_entries:
@@ -234,9 +228,7 @@ class ValkeyStorage(StorageBackend):
                 return 0
 
             # Trim to keep_count messages
-            await self._client.xtrim(
-                stream_key, TrimByMaxLen(exact=True, threshold=keep_count)
-            )
+            await self._client.xtrim(stream_key, TrimByMaxLen(exact=True, threshold=keep_count))
 
             # Return number of messages removed
             removed = current_length - keep_count
@@ -268,7 +260,7 @@ class ValkeyStorage(StorageBackend):
             logger.error(f"Failed to get topic length from Valkey: {e}")
             raise
 
-    async def health_check(self) -> Dict[str, Any]:
+    async def health_check(self) -> dict[str, Any]:
         """Check Valkey connection health.
 
         Returns:
@@ -282,7 +274,7 @@ class ValkeyStorage(StorageBackend):
             pong = await self._client.ping()
 
             # Check if PONG response is healthy (can be bytes or string)
-            is_healthy = (pong == b"PONG" or pong == "PONG")
+            is_healthy = pong == b"PONG" or pong == "PONG"
 
             return {
                 "status": "healthy" if is_healthy else "unhealthy",

@@ -4,7 +4,7 @@ import asyncio
 import datetime
 import logging
 from collections import defaultdict
-from typing import Any, Dict, List, Set
+from typing import Any
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class PollWaiter:
     """Represents a client waiting for messages via long polling."""
 
-    def __init__(self, client_id: str, topics: List[str]):
+    def __init__(self, client_id: str, topics: list[str]):
         """Initialize a poll waiter.
 
         Args:
@@ -25,7 +25,7 @@ class PollWaiter:
         self.queue: asyncio.Queue = asyncio.Queue()
         self.created_at = datetime.datetime.now(datetime.UTC)
 
-    async def put_message(self, message: Dict[str, Any]) -> None:
+    async def put_message(self, message: dict[str, Any]) -> None:
         """Add a message to the waiter's queue.
 
         Args:
@@ -33,7 +33,7 @@ class PollWaiter:
         """
         await self.queue.put(message)
 
-    async def wait_for_messages(self, timeout: float) -> List[Dict[str, Any]]:
+    async def wait_for_messages(self, timeout: float) -> list[dict[str, Any]]:
         """Wait for messages with timeout.
 
         Args:
@@ -68,11 +68,11 @@ class PollManager:
 
     def __init__(self):
         """Initialize the poll manager."""
-        self._waiters: Dict[str, PollWaiter] = {}
-        self._topic_subscribers: Dict[str, Set[str]] = defaultdict(set)
+        self._waiters: dict[str, PollWaiter] = {}
+        self._topic_subscribers: dict[str, set[str]] = defaultdict(set)
         self._lock = asyncio.Lock()
 
-    async def create_waiter(self, topics: List[str]) -> PollWaiter:
+    async def create_waiter(self, topics: list[str]) -> PollWaiter:
         """Create a new poll waiter for the given topics.
 
         Args:
@@ -89,9 +89,7 @@ class PollManager:
             for topic in topics:
                 self._topic_subscribers[topic].add(client_id)
 
-        logger.info(
-            f"Created poll waiter {client_id} for topics: {topics}"
-        )
+        logger.info(f"Created poll waiter {client_id} for topics: {topics}")
 
         return waiter
 
@@ -113,7 +111,7 @@ class PollManager:
 
                 logger.info(f"Removed poll waiter {client_id}")
 
-    async def broadcast_to_topic(self, topic: str, message: Dict[str, Any]) -> int:
+    async def broadcast_to_topic(self, topic: str, message: dict[str, Any]) -> int:
         """Broadcast a message to all waiters subscribed to a topic.
 
         Args:
@@ -134,13 +132,11 @@ class PollManager:
                 count += 1
 
         if count > 0:
-            logger.debug(
-                f"Broadcasted message to {count} poll waiters on topic {topic}"
-            )
+            logger.debug(f"Broadcasted message to {count} poll waiters on topic {topic}")
 
         return count
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get statistics about active poll waiters.
 
         Returns:
@@ -150,8 +146,7 @@ class PollManager:
             "active_waiters": len(self._waiters),
             "subscribed_topics": len(self._topic_subscribers),
             "topic_subscriber_counts": {
-                topic: len(subscribers)
-                for topic, subscribers in self._topic_subscribers.items()
+                topic: len(subscribers) for topic, subscribers in self._topic_subscribers.items()
             },
         }
 

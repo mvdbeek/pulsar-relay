@@ -1,7 +1,7 @@
 """Pydantic models for request/response validation."""
 
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -10,9 +10,9 @@ class Message(BaseModel):
     """Message model for incoming messages from producers."""
 
     topic: str = Field(..., min_length=1, max_length=255, description="Topic name")
-    payload: Dict[str, Any] = Field(..., description="Message payload as JSON")
+    payload: dict[str, Any] = Field(..., description="Message payload as JSON")
     ttl: Optional[int] = Field(None, gt=0, description="Time-to-live in seconds")
-    metadata: Optional[Dict[str, str]] = Field(None, description="Optional metadata")
+    metadata: Optional[dict[str, str]] = Field(None, description="Optional metadata")
 
     @field_validator("topic")
     @classmethod
@@ -75,9 +75,7 @@ class BulkMessageResponse(BaseModel):
     """Response model for bulk message submission."""
 
     results: list[BulkMessageResult]
-    summary: Dict[str, int] = Field(
-        default_factory=lambda: {"total": 0, "accepted": 0, "rejected": 0}
-    )
+    summary: dict[str, int] = Field(default_factory=lambda: {"total": 0, "accepted": 0, "rejected": 0})
 
 
 class WebSocketSubscribe(BaseModel):
@@ -115,9 +113,9 @@ class WebSocketMessage(BaseModel):
     type: str = "message"
     message_id: str
     topic: str
-    payload: Dict[str, Any]
+    payload: dict[str, Any]
     timestamp: datetime
-    metadata: Optional[Dict[str, str]] = None
+    metadata: Optional[dict[str, str]] = None
 
 
 class WebSocketPong(BaseModel):
@@ -142,7 +140,7 @@ class WebSocketError(BaseModel):
     type: str = "error"
     code: str
     message: str
-    details: Optional[Dict[str, Any]] = None
+    details: Optional[dict[str, Any]] = None
 
 
 class HealthResponse(BaseModel):
@@ -157,4 +155,4 @@ class ReadinessResponse(BaseModel):
     """Readiness check response."""
 
     ready: bool
-    checks: Dict[str, str]
+    checks: dict[str, str]

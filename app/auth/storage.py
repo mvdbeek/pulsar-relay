@@ -3,11 +3,11 @@
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Optional
 from uuid import uuid4
 
-from app.auth.models import User, UserCreate
 from app.auth.jwt import hash_password
+from app.auth.models import User, UserCreate
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +46,8 @@ class InMemoryUserStorage(UserStorage):
 
     def __init__(self):
         """Initialize in-memory storage."""
-        self._users: Dict[str, User] = {}
-        self._username_index: Dict[str, str] = {}  # username -> user_id
+        self._users: dict[str, User] = {}
+        self._username_index: dict[str, str] = {}  # username -> user_id
         logger.info("Initialized InMemoryUserStorage")
 
     async def create_user(self, user_data: UserCreate) -> User:
@@ -145,7 +145,7 @@ class InMemoryUserStorage(UserStorage):
             return True
         return False
 
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> dict:
         """Get storage statistics.
 
         Returns:
@@ -187,8 +187,6 @@ async def create_default_users(storage: UserStorage) -> None:
     for user_data in default_users:
         try:
             user = await storage.create_user(user_data)
-            logger.info(
-                f"Created default user: {user.username} with permissions {user.permissions}"
-            )
+            logger.info(f"Created default user: {user.username} with permissions {user.permissions}")
         except ValueError as e:
             logger.debug(f"Default user already exists: {e}")

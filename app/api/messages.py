@@ -5,22 +5,22 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.auth.dependencies import require_permission
+from app.auth.models import User
+from app.core.connections import ConnectionManager
+from app.core.polling import PollManager
 from app.models import (
-    Message,
-    MessageResponse,
     BulkMessageRequest,
     BulkMessageResponse,
     BulkMessageResult,
+    Message,
+    MessageResponse,
     WebSocketMessage,
 )
 from app.storage.base import StorageBackend
-from app.core.connections import ConnectionManager
-from app.core.polling import PollManager
-from app.utils.metrics import messages_received_total, message_latency_seconds
-from app.auth.models import User
-from app.auth.dependencies import get_current_user, require_permission
+from app.utils.metrics import message_latency_seconds, messages_received_total
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
@@ -182,19 +182,11 @@ async def create_bulk_messages(
                 }
                 await _poll_manager.broadcast_to_topic(message.topic, poll_message)
 
-            results.append(
-                BulkMessageResult(
-                    message_id=message_id, topic=message.topic, status="accepted"
-                )
-            )
+            results.append(BulkMessageResult(message_id=message_id, topic=message.topic, status="accepted"))
             accepted += 1
 
         except Exception as e:
-            results.append(
-                BulkMessageResult(
-                    message_id=None, topic=message.topic, status="rejected", error=str(e)
-                )
-            )
+            results.append(BulkMessageResult(message_id=None, topic=message.topic, status="rejected", error=str(e)))
             rejected += 1
 
     return BulkMessageResponse(

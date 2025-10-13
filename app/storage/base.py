@@ -1,8 +1,8 @@
 """Base storage interface."""
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
 from datetime import datetime
+from typing import Any, Optional
 
 
 class StorageBackend(ABC):
@@ -10,15 +10,18 @@ class StorageBackend(ABC):
 
     @abstractmethod
     async def save_message(
-        self, message_id: str, topic: str, payload: Dict[str, Any], timestamp: datetime, metadata: Optional[Dict[str, str]] = None
+        self,
+        message_id: str,
+        topic: str,
+        payload: dict[str, Any],
+        timestamp: datetime,
+        metadata: Optional[dict[str, str]] = None,
     ) -> None:
         """Save a message to storage."""
         pass
 
     @abstractmethod
-    async def get_messages(
-        self, topic: str, since: Optional[str] = None, limit: int = 10
-    ) -> List[Dict[str, Any]]:
+    async def get_messages(self, topic: str, since: Optional[str] = None, limit: int = 10) -> list[dict[str, Any]]:
         """Get messages from a topic."""
         pass
 

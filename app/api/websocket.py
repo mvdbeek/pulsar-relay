@@ -1,29 +1,28 @@
 """WebSocket API for real-time message delivery."""
 
-import uuid
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
-from app.models import (
-    WebSocketSubscribe,
-    WebSocketUnsubscribe,
-    WebSocketAck,
-    WebSocketPing,
-    WebSocketSubscribed,
-    WebSocketPong,
-    WebSocketError,
-)
+from app.auth.dependencies import get_user_storage
+from app.auth.jwt import decode_token
 from app.core.connections import ConnectionManager
+from app.models import (
+    WebSocketAck,
+    WebSocketError,
+    WebSocketPong,
+    WebSocketSubscribe,
+    WebSocketSubscribed,
+    WebSocketUnsubscribe,
+)
 from app.utils.metrics import (
+    active_websocket_connections,
     websocket_connections_total,
     websocket_disconnections_total,
-    active_websocket_connections,
 )
-from app.auth.jwt import decode_token
-from app.auth.dependencies import get_user_storage
 
 router = APIRouter(tags=["websocket"])
 logger = logging.getLogger(__name__)
@@ -69,7 +68,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(..., descr
     # Validate token before accepting connection
     token_payload = decode_token(token)
     if token_payload is None:
-        logger.warning(f"WebSocket connection rejected: Invalid token")
+        logger.warning("WebSocket connection rejected: Invalid token")
         await websocket.close(code=1008, reason="Invalid or expired token")
         return
 
@@ -78,13 +77,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(..., descr
         user_storage = get_user_storage()
         user = await user_storage.get_user_by_id(token_payload.sub)
         if user is None or not user.is_active:
-            logger.warning(f"WebSocket connection rejected: User not found or inactive")
+            logger.warning("WebSocket connection rejected: User not found or inactive")
             await websocket.close(code=1008, reason="User not found or inactive")
             return
 
         # Check if user has read permission
         if "read" not in user.permissions:
-            logger.warning(f"WebSocket connection rejected: User lacks read permission")
+            logger.warning("WebSocket connection rejected: User lacks read permission")
             await websocket.close(code=1008, reason="Permission denied: read permission required")
             return
 
@@ -173,12 +172,10 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(..., descr
 
             except Exception as e:
                 logger.error(f"Error processing WebSocket message: {e}")
-                error = WebSocketError(
-                    type="error", code="PROCESSING_ERROR", message=str(e)
-                )
+                error = WebSocketError(type="error", code="PROCESSING_ERROR", message=str(e))
                 try:
                     await websocket.send_json(error.model_dump(mode='json'))
-                except:
+                except Exception:
                     break
 
     except WebSocketDisconnect:

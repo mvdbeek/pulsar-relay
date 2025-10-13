@@ -1,14 +1,14 @@
 """Tests for message ingestion API."""
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
-from app.main import app
-from app.storage.memory import MemoryStorage
-from app.api import messages, health
-from app.auth.storage import InMemoryUserStorage, create_default_users
+from app.api import health, messages
 from app.auth.dependencies import set_user_storage
 from app.auth.jwt import create_access_token
+from app.auth.storage import InMemoryUserStorage, create_default_users
+from app.main import app
+from app.storage.memory import MemoryStorage
 
 
 @pytest.fixture
@@ -31,9 +31,7 @@ async def client():
 
     transport = ASGITransport(app=app)
     async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-        headers={"Authorization": f"Bearer {token}"}
+        transport=transport, base_url="http://test", headers={"Authorization": f"Bearer {token}"}
     ) as ac:
         yield ac
 
@@ -66,9 +64,7 @@ class TestCreateMessage:
 
     async def test_create_message_minimal(self, client):
         """Test creating a message with minimal fields."""
-        response = await client.post(
-            "/api/v1/messages", json={"topic": "test", "payload": {"data": "value"}}
-        )
+        response = await client.post("/api/v1/messages", json={"topic": "test", "payload": {"data": "value"}})
 
         assert response.status_code == 201
         data = response.json()
@@ -78,9 +74,7 @@ class TestCreateMessage:
 
     async def test_create_message_invalid_topic(self, client):
         """Test creating a message with invalid topic."""
-        response = await client.post(
-            "/api/v1/messages", json={"topic": "invalid@topic!", "payload": {"data": "value"}}
-        )
+        response = await client.post("/api/v1/messages", json={"topic": "invalid@topic!", "payload": {"data": "value"}})
 
         assert response.status_code == 422
         data = response.json()
@@ -88,9 +82,7 @@ class TestCreateMessage:
 
     async def test_create_message_empty_topic(self, client):
         """Test creating a message with empty topic."""
-        response = await client.post(
-            "/api/v1/messages", json={"topic": "", "payload": {"data": "value"}}
-        )
+        response = await client.post("/api/v1/messages", json={"topic": "", "payload": {"data": "value"}})
 
         assert response.status_code == 422
 
@@ -111,9 +103,7 @@ class TestCreateMessage:
     async def test_message_persisted_to_storage(self, client):
         """Test that created message is persisted to storage."""
         # Create message
-        response = await client.post(
-            "/api/v1/messages", json={"topic": "test-persist", "payload": {"data": "test"}}
-        )
+        response = await client.post("/api/v1/messages", json={"topic": "test-persist", "payload": {"data": "test"}})
 
         assert response.status_code == 201
         message_id = response.json()["message_id"]

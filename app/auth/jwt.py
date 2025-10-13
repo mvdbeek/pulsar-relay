@@ -8,7 +8,7 @@ import jwt
 from jwt import DecodeError, ExpiredSignatureError, InvalidTokenError
 from passlib.context import CryptContext
 
-from app.auth.models import User, TokenPayload
+from app.auth.models import TokenPayload, User
 
 logger = logging.getLogger(__name__)
 

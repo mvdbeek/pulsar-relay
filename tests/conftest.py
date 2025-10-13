@@ -1,18 +1,18 @@
 """Shared test fixtures and utilities."""
 
-import pytest
 import asyncio
+
+import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
-from app.auth.storage import InMemoryUserStorage, create_default_users
-from app.auth.dependencies import set_user_storage
-from app.auth.models import User
-from app.auth.jwt import create_access_token
-from app.storage.memory import MemoryStorage
-from app.core.polling import PollManager
-from app.core.connections import ConnectionManager
 from app.api import messages, websocket
+from app.auth.dependencies import set_user_storage
+from app.auth.jwt import create_access_token
+from app.auth.storage import InMemoryUserStorage, create_default_users
+from app.core.connections import ConnectionManager
+from app.core.polling import PollManager
+from app.main import app
+from app.storage.memory import MemoryStorage
 
 
 @pytest.fixture

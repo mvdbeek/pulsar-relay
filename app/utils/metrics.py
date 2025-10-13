@@ -1,6 +1,6 @@
 """Prometheus metrics for monitoring."""
 
-from prometheus_client import Counter, Histogram, Gauge
+from prometheus_client import Counter, Gauge, Histogram
 
 # Message metrics
 messages_received_total = Counter(

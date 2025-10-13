@@ -1,9 +1,10 @@
 """Tests for Valkey storage backend."""
 
-import pytest
-from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
 import json
+from datetime import datetime
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from app.storage.valkey import ValkeyStorage
 
@@ -112,9 +113,7 @@ class TestValkeyStorage:
         """Test retrieving messages starting from a specific stream ID."""
         valkey_storage._client.xrange = AsyncMock(return_value={})
 
-        await valkey_storage.get_messages(
-            "test-topic", since="1234567890120-0", limit=10
-        )
+        await valkey_storage.get_messages("test-topic", since="1234567890120-0", limit=10)
 
         # Verify xrange was called with ExclusiveIdBound
         valkey_storage._client.xrange.assert_called_once()
@@ -122,6 +121,7 @@ class TestValkeyStorage:
         assert call_args[0][0] == "stream:topic:test-topic"
         # Check that start bound is ExclusiveIdBound type
         from glide.async_commands.stream import ExclusiveIdBound, MaxId
+
         assert isinstance(call_args[1]["start"], ExclusiveIdBound)
         assert isinstance(call_args[1]["end"], MaxId)
         assert call_args[1]["count"] == 10
@@ -138,7 +138,8 @@ class TestValkeyStorage:
         call_args = valkey_storage._client.xrange.call_args
         assert call_args[0][0] == "stream:topic:test-topic"
         # Check that start bound is MinId and end is MaxId
-        from glide.async_commands.stream import MinId, MaxId
+        from glide.async_commands.stream import MaxId, MinId
+
         assert isinstance(call_args[1]["start"], MinId)
         assert isinstance(call_args[1]["end"], MaxId)
         assert call_args[1]["count"] == 5
@@ -240,9 +241,7 @@ class TestValkeyStorage:
         storage = ValkeyStorage()
 
         with pytest.raises(RuntimeError, match="Not connected to Valkey"):
-            await storage.save_message(
-                "msg", "topic", {}, datetime.now()
-            )
+            await storage.save_message("msg", "topic", {}, datetime.now())
 
         with pytest.raises(RuntimeError, match="Not connected to Valkey"):
             await storage.get_messages("topic")

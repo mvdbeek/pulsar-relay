@@ -2,11 +2,12 @@
 
 import asyncio
 import datetime
+
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
 from app.core.polling import PollManager, PollWaiter
+from app.main import app
 from app.storage.memory import MemoryStorage
 
 
@@ -146,6 +147,7 @@ class TestPollManager:
 
         # Manually set created_at to past
         from datetime import timedelta
+
         waiter.created_at = datetime.datetime.now(datetime.UTC) - timedelta(seconds=400)
 
         # Cleanup with 300 second max age
@@ -158,9 +160,10 @@ class TestPollManager:
 @pytest.fixture
 def user_storage():
     """Create user storage with default users."""
-    from app.auth.storage import InMemoryUserStorage, create_default_users
-    from app.auth.dependencies import set_user_storage
     import asyncio
+
+    from app.auth.dependencies import set_user_storage
+    from app.auth.storage import InMemoryUserStorage, create_default_users
 
     storage = InMemoryUserStorage()
     loop = asyncio.get_event_loop()
@@ -172,8 +175,9 @@ def user_storage():
 @pytest.fixture
 def auth_token(user_storage):
     """Create an auth token for a test user."""
-    from app.auth.jwt import create_access_token
     import asyncio
+
+    from app.auth.jwt import create_access_token
 
     loop = asyncio.get_event_loop()
     user = loop.run_until_complete(user_storage.get_user_by_username("user"))
@@ -202,7 +206,7 @@ class TestPollingEndpoint:
                 "topics": ["test-topic"],
                 "timeout": 1,  # Short timeout
             },
-            headers={"Authorization": f"Bearer {auth_token}"}
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
 
         assert response.status_code == 200
@@ -222,7 +226,7 @@ class TestPollingEndpoint:
                 "since": None,
                 "timeout": 1,  # 1 second timeout
             },
-            headers={"Authorization": f"Bearer {auth_token}"}
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
 
         assert response.status_code == 200
@@ -247,15 +251,9 @@ class TestPollingEndpoint:
         from datetime import timezone
 
         # Save multiple messages
-        await test_storage.save_message(
-            "msg_1", "test-topic", {"index": 1}, datetime.now(timezone.utc)
-        )
-        await test_storage.save_message(
-            "msg_2", "test-topic", {"index": 2}, datetime.now(timezone.utc)
-        )
-        await test_storage.save_message(
-            "msg_3", "test-topic", {"index": 3}, datetime.now(timezone.utc)
-        )
+        await test_storage.save_message("msg_1", "test-topic", {"index": 1}, datetime.now(timezone.utc))
+        await test_storage.save_message("msg_2", "test-topic", {"index": 2}, datetime.now(timezone.utc))
+        await test_storage.save_message("msg_3", "test-topic", {"index": 3}, datetime.now(timezone.utc))
 
         # Poll with since=msg_1 (should get msg_2 and msg_3)
         response = test_client.post(
@@ -265,7 +263,7 @@ class TestPollingEndpoint:
                 "since": {"test-topic": "msg_1"},
                 "timeout": 1,
             },
-            headers={"Authorization": f"Bearer {auth_token}"}
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
 
         assert response.status_code == 200
@@ -283,7 +281,7 @@ class TestPollingEndpoint:
                 "topics": [],
                 "timeout": 30,
             },
-            headers={"Authorization": f"Bearer {auth_token}"}
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
 
         assert response.status_code == 422  # Validation error
@@ -291,10 +289,7 @@ class TestPollingEndpoint:
     @pytest.mark.asyncio
     async def test_poll_stats_endpoint(self, test_client, auth_token):
         """Test the poll stats endpoint."""
-        response = test_client.get(
-            "/messages/poll/stats",
-            headers={"Authorization": f"Bearer {auth_token}"}
-        )
+        response = test_client.get("/messages/poll/stats", headers={"Authorization": f"Bearer {auth_token}"})
 
         assert response.status_code == 200
         data = response.json()
@@ -311,7 +306,7 @@ class TestPollingEndpoint:
                 "since": None,
                 "timeout": 1,
             },
-            headers={"Authorization": f"Bearer {auth_token}"}
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
 
         assert response.status_code == 200

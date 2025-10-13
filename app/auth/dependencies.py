@@ -4,10 +4,10 @@ import logging
 from typing import Optional
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.auth.jwt import decode_token
-from app.auth.models import User, TokenPayload
+from app.auth.models import TokenPayload, User
 from app.auth.storage import UserStorage
 
 logger = logging.getLogger(__name__)

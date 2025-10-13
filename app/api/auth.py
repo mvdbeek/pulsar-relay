@@ -1,28 +1,27 @@
 """Authentication endpoints."""
 
 import logging
-from typing import Dict, Any
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.auth.dependencies import (
+    get_current_user,
+    get_user_storage,
+    require_permission,
+)
+from app.auth.jwt import (
+    create_access_token,
+    get_token_expiration_seconds,
+    verify_password,
+)
 from app.auth.models import (
     LoginRequest,
     TokenResponse,
+    User,
     UserCreate,
     UserPublic,
-    User,
 )
-from app.auth.jwt import (
-    verify_password,
-    create_access_token,
-    get_token_expiration_seconds,
-)
-from app.auth.dependencies import (
-    get_user_storage,
-    get_current_user,
-    require_permission,
-)
-from app.auth.storage import UserStorage
 
 logger = logging.getLogger(__name__)
 
@@ -114,9 +113,7 @@ async def register(
 
     try:
         user = await storage.create_user(user_data)
-        logger.info(
-            f"User {user.username} registered by admin {current_user.username}"
-        )
+        logger.info(f"User {user.username} registered by admin {current_user.username}")
 
         return UserPublic(
             user_id=user.user_id,
@@ -158,7 +155,7 @@ async def get_current_user_info(
 @router.get("/users/stats")
 async def get_user_stats(
     current_user: User = Depends(require_permission("admin")),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Get user statistics (admin only).
 
     Args:

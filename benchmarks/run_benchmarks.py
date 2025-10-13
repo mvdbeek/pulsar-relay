@@ -1,15 +1,14 @@
 """Benchmark suite for Pulsar Proxy performance testing."""
 
 import asyncio
-import time
-import statistics
 import json
-from datetime import datetime
-from typing import List, Dict, Any
+import statistics
+import time
 from dataclasses import dataclass
+from datetime import datetime
+
 import httpx
 import websockets
-from concurrent.futures import ThreadPoolExecutor
 
 # Configuration
 BASE_URL = "http://localhost:8080"
@@ -24,7 +23,7 @@ class BenchmarkResult:
     duration: float
     operations: int
     throughput: float  # ops/sec
-    latencies: List[float]
+    latencies: list[float]
     avg_latency: float
     p50_latency: float
     p95_latency: float
@@ -38,9 +37,9 @@ class BenchmarkRunner:
     def __init__(self, base_url: str = BASE_URL, ws_url: str = WS_URL):
         self.base_url = base_url
         self.ws_url = ws_url
-        self.results: List[BenchmarkResult] = []
+        self.results: list[BenchmarkResult] = []
 
-    def calculate_percentile(self, latencies: List[float], percentile: float) -> float:
+    def calculate_percentile(self, latencies: list[float], percentile: float) -> float:
         """Calculate percentile from latency list."""
         if not latencies:
             return 0.0
@@ -49,7 +48,7 @@ class BenchmarkRunner:
         return sorted_latencies[min(index, len(sorted_latencies) - 1)]
 
     def create_result(
-        self, name: str, duration: float, operations: int, latencies: List[float], errors: int = 0
+        self, name: str, duration: float, operations: int, latencies: list[float], errors: int = 0
     ) -> BenchmarkResult:
         """Create a benchmark result with calculated metrics."""
         throughput = operations / duration if duration > 0 else 0
@@ -212,11 +211,13 @@ class BenchmarkRunner:
                 async with websockets.connect(self.ws_url) as websocket:
                     # Subscribe
                     await websocket.send(
-                        json.dumps({
-                            "type": "subscribe",
-                            "topics": [f"ws-topic-{client_id % 5}"],
-                            "client_id": f"bench-client-{client_id}",
-                        })
+                        json.dumps(
+                            {
+                                "type": "subscribe",
+                                "topics": [f"ws-topic-{client_id % 5}"],
+                                "client_id": f"bench-client-{client_id}",
+                            }
+                        )
                     )
 
                     # Wait for confirmation
@@ -252,9 +253,7 @@ class BenchmarkRunner:
         self.results.append(result)
         return result
 
-    async def benchmark_message_delivery(
-        self, num_clients: int = 20, messages_per_topic: int = 100
-    ) -> BenchmarkResult:
+    async def benchmark_message_delivery(self, num_clients: int = 20, messages_per_topic: int = 100) -> BenchmarkResult:
         """Benchmark end-to-end message delivery latency via WebSocket."""
         print(f"\n📊 Running: Message Delivery ({num_clients} clients, {messages_per_topic} msgs/topic)")
 
@@ -270,11 +269,13 @@ class BenchmarkRunner:
                 async with websockets.connect(self.ws_url) as websocket:
                     # Subscribe
                     await websocket.send(
-                        json.dumps({
-                            "type": "subscribe",
-                            "topics": [topic],
-                            "client_id": f"consumer-{client_id}",
-                        })
+                        json.dumps(
+                            {
+                                "type": "subscribe",
+                                "topics": [topic],
+                                "client_id": f"consumer-{client_id}",
+                            }
+                        )
                     )
 
                     # Wait for subscription confirmation
@@ -330,8 +331,7 @@ class BenchmarkRunner:
 
         # Start consumers
         consumer_tasks = [
-            websocket_consumer(i, topics[i % len(topics)], messages_per_topic)
-            for i in range(num_clients)
+            websocket_consumer(i, topics[i % len(topics)], messages_per_topic) for i in range(num_clients)
         ]
 
         # Start producers
@@ -352,9 +352,7 @@ class BenchmarkRunner:
         self.results.append(result)
         return result
 
-    async def benchmark_broadcast_performance(
-        self, num_clients: int = 50, num_messages: int = 100
-    ) -> BenchmarkResult:
+    async def benchmark_broadcast_performance(self, num_clients: int = 50, num_messages: int = 100) -> BenchmarkResult:
         """Benchmark broadcasting performance with multiple subscribers."""
         print(f"\n📊 Running: Broadcast Performance ({num_clients} clients, {num_messages} messages)")
 
@@ -373,11 +371,13 @@ class BenchmarkRunner:
                 async with websockets.connect(self.ws_url) as websocket:
                     # Subscribe
                     await websocket.send(
-                        json.dumps({
-                            "type": "subscribe",
-                            "topics": [topic],
-                            "client_id": f"broadcast-client-{client_id}",
-                        })
+                        json.dumps(
+                            {
+                                "type": "subscribe",
+                                "topics": [topic],
+                                "client_id": f"broadcast-client-{client_id}",
+                            }
+                        )
                     )
 
                     # Wait for confirmation
@@ -571,10 +571,7 @@ class BenchmarkRunner:
         start_time = time.time()
 
         # Start consumers
-        consumer_tasks = [
-            polling_consumer(i, topics[i % len(topics)], messages_per_topic)
-            for i in range(num_clients)
-        ]
+        consumer_tasks = [polling_consumer(i, topics[i % len(topics)], messages_per_topic) for i in range(num_clients)]
 
         # Start producers
         producer_tasks = [message_producer(topic, messages_per_topic) for topic in topics]
@@ -641,7 +638,7 @@ class BenchmarkRunner:
         self.results.append(result)
         return result
 
-    async def benchmark_polling_vs_websocket(self, num_messages: int = 50) -> Dict[str, BenchmarkResult]:
+    async def benchmark_polling_vs_websocket(self, num_messages: int = 50) -> dict[str, BenchmarkResult]:
         """Compare long polling vs WebSocket message delivery."""
         print(f"\n📊 Running: Long Polling vs WebSocket Comparison ({num_messages} messages each)")
 
@@ -658,11 +655,13 @@ class BenchmarkRunner:
             try:
                 async with websockets.connect(self.ws_url) as websocket:
                     await websocket.send(
-                        json.dumps({
-                            "type": "subscribe",
-                            "topics": [topic_ws],
-                            "client_id": "comparison-ws",
-                        })
+                        json.dumps(
+                            {
+                                "type": "subscribe",
+                                "topics": [topic_ws],
+                                "client_id": "comparison-ws",
+                            }
+                        )
                     )
                     await websocket.recv()  # Wait for confirmation
 
@@ -872,6 +871,7 @@ class BenchmarkRunner:
         except Exception as e:
             print(f"\n❌ Benchmark error: {e}")
             import traceback
+
             traceback.print_exc()
 
         # Print summary

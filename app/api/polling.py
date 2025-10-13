@@ -1,15 +1,15 @@
 """Long polling HTTP endpoint as WebSocket fallback."""
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from app.auth.dependencies import get_current_user, require_permission
+from app.auth.models import User
 from app.core.polling import PollManager
 from app.storage.base import StorageBackend
-from app.auth.models import User
-from app.auth.dependencies import get_current_user, require_permission
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +19,8 @@ router = APIRouter()
 class PollRequest(BaseModel):
     """Request model for long polling."""
 
-    topics: List[str] = Field(..., description="Topics to subscribe to", min_length=1)
-    since: Optional[Dict[str, str]] = Field(
+    topics: list[str] = Field(..., description="Topics to subscribe to", min_length=1)
+    since: Optional[dict[str, str]] = Field(
         default=None,
         description="Last message ID seen per topic for catching up on missed messages",
     )
@@ -35,9 +35,7 @@ class PollRequest(BaseModel):
 class PollResponse(BaseModel):
     """Response model for long polling."""
 
-    messages: List[Dict[str, Any]] = Field(
-        default_factory=list, description="Messages received"
-    )
+    messages: list[dict[str, Any]] = Field(default_factory=list, description="Messages received")
     has_more: bool = Field(
         default=False,
         description="Whether there might be more messages available immediately",
@@ -82,9 +80,7 @@ async def long_poll(
             for topic in poll_request.topics:
                 since_id = poll_request.since.get(topic)
                 try:
-                    recent_messages = await storage.get_messages(
-                        topic, since=since_id, limit=100
-                    )
+                    recent_messages = await storage.get_messages(topic, since=since_id, limit=100)
                     for msg in recent_messages:
                         messages.append(
                             {
@@ -101,9 +97,7 @@ async def long_poll(
 
         # If we already have messages, return immediately
         if messages:
-            logger.debug(
-                f"Returning {len(messages)} cached messages immediately"
-            )
+            logger.debug(f"Returning {len(messages)} cached messages immediately")
             return PollResponse(messages=messages, has_more=len(messages) >= 100)
 
         # No cached messages, create waiter for new messages
@@ -112,17 +106,12 @@ async def long_poll(
         try:
             # Wait for new messages with timeout
             logger.debug(
-                f"Waiting for new messages on topics {poll_request.topics} "
-                f"with timeout {poll_request.timeout}s"
+                f"Waiting for new messages on topics {poll_request.topics} " f"with timeout {poll_request.timeout}s"
             )
-            new_messages = await waiter.wait_for_messages(
-                timeout=float(poll_request.timeout)
-            )
+            new_messages = await waiter.wait_for_messages(timeout=float(poll_request.timeout))
 
             if new_messages:
-                logger.info(
-                    f"Returning {len(new_messages)} new messages to poll client"
-                )
+                logger.info(f"Returning {len(new_messages)} new messages to poll client")
                 messages.extend(new_messages)
 
         finally:
@@ -140,7 +129,7 @@ async def long_poll(
 async def get_poll_stats(
     request: Request,
     current_user: User = Depends(get_current_user),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Get statistics about active long polling clients.
 
     Args:

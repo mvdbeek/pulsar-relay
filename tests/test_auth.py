@@ -1,19 +1,20 @@
 """Tests for authentication functionality."""
 
+from datetime import timedelta
+
 import pytest
-from datetime import datetime, timedelta
 from fastapi.testclient import TestClient
 
-from app.main import app
-from app.auth.models import User, UserCreate
-from app.auth.storage import InMemoryUserStorage, create_default_users
 from app.auth.dependencies import set_user_storage
 from app.auth.jwt import (
-    hash_password,
-    verify_password,
     create_access_token,
     decode_token,
+    hash_password,
+    verify_password,
 )
+from app.auth.models import UserCreate
+from app.auth.storage import InMemoryUserStorage, create_default_users
+from app.main import app
 
 
 @pytest.fixture
@@ -27,9 +28,10 @@ def auth_storage():
 def test_client():
     """Create a test client with auth storage."""
     import asyncio
-    from app.storage.memory import MemoryStorage
-    from app.core.polling import PollManager
+
     from app.api import messages
+    from app.core.polling import PollManager
+    from app.storage.memory import MemoryStorage
 
     user_storage = InMemoryUserStorage()
     msg_storage = MemoryStorage()

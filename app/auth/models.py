@@ -1,7 +1,8 @@
 """Authentication models and schemas."""
 
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -14,7 +15,7 @@ class User(BaseModel):
     hashed_password: str = Field(..., description="Hashed password")
     is_active: bool = Field(default=True, description="Whether user is active")
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    permissions: List[str] = Field(default_factory=list, description="User permissions")
+    permissions: list[str] = Field(default_factory=list, description="User permissions")
 
 
 class UserCreate(BaseModel):
@@ -23,7 +24,7 @@ class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     email: Optional[str] = Field(None)
     password: str = Field(..., min_length=8)
-    permissions: List[str] = Field(default_factory=list)
+    permissions: list[str] = Field(default_factory=list)
 
 
 class UserPublic(BaseModel):
@@ -34,7 +35,7 @@ class UserPublic(BaseModel):
     email: Optional[str]
     is_active: bool
     created_at: datetime
-    permissions: List[str]
+    permissions: list[str]
 
 
 class LoginRequest(BaseModel):
@@ -58,6 +59,6 @@ class TokenPayload(BaseModel):
 
     sub: str = Field(..., description="Subject (user_id)")
     username: str = Field(..., description="Username")
-    permissions: List[str] = Field(default_factory=list)
+    permissions: list[str] = Field(default_factory=list)
     exp: int = Field(..., description="Expiration timestamp")
     iat: int = Field(..., description="Issued at timestamp")

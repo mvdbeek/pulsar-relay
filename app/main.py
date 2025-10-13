@@ -2,28 +2,28 @@
 
 import asyncio
 import logging
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
+from app.api import auth, health, messages, polling, websocket
+from app.auth.dependencies import set_user_storage
+from app.auth.storage import InMemoryUserStorage, create_default_users
 from app.config import settings
-from app.storage.base import StorageBackend
-from app.storage.memory import MemoryStorage
-from app.storage.valkey import ValkeyStorage
 from app.core.connections import ConnectionManager
 from app.core.polling import PollManager
-from app.auth.storage import InMemoryUserStorage, create_default_users
-from app.auth.dependencies import set_user_storage
-from app.api import messages, health, websocket, polling, auth
+from app.storage.memory import MemoryStorage
+from app.storage.valkey import ValkeyStorage
 
 log = logging.getLogger(__name__)
 
 # Use uvloop for better performance (optional, requires Python <=3.12)
 try:
     import uvloop
+
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 except ImportError:
     pass  # uvloop not available, using default event loop

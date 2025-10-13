@@ -2,8 +2,6 @@
 
 import asyncio
 import logging
-from typing import Dict, Set
-from weakref import WeakSet
 
 from fastapi import WebSocket
 
@@ -16,9 +14,9 @@ class ConnectionManager:
     def __init__(self):
         """Initialize connection manager."""
         # Topic -> Set of WebSocket connections
-        self._connections: Dict[str, Set[WebSocket]] = {}
+        self._connections: dict[str, set[WebSocket]] = {}
         # WebSocket -> Set of subscribed topics
-        self._client_topics: Dict[WebSocket, Set[str]] = {}
+        self._client_topics: dict[WebSocket, set[str]] = {}
         # Lock for thread-safe operations
         self._lock = asyncio.Lock()
 
@@ -160,7 +158,7 @@ class ConnectionManager:
                 # Total unique connections across all topics
                 return len(self._client_topics)
 
-    async def get_topics_for_client(self, websocket: WebSocket) -> Set[str]:
+    async def get_topics_for_client(self, websocket: WebSocket) -> set[str]:
         """Get topics a client is subscribed to.
 
         Args:
@@ -172,7 +170,7 @@ class ConnectionManager:
         async with self._lock:
             return self._client_topics.get(websocket, set()).copy()
 
-    async def get_all_topics(self) -> Set[str]:
+    async def get_all_topics(self) -> set[str]:
         """Get all topics with active subscriptions.
 
         Returns:

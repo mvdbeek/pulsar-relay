@@ -1,17 +1,17 @@
 """Tests for WebSocket endpoints."""
 
-import pytest
 import asyncio
-from fastapi.testclient import TestClient
-from httpx import AsyncClient, ASGITransport
 
-from app.main import app
-from app.storage.memory import MemoryStorage
-from app.core.connections import ConnectionManager
-from app.api import messages, health, websocket
-from app.auth.storage import InMemoryUserStorage, create_default_users
+import pytest
+from fastapi.testclient import TestClient
+
+from app.api import health, messages, websocket
 from app.auth.dependencies import set_user_storage
 from app.auth.jwt import create_access_token
+from app.auth.storage import InMemoryUserStorage, create_default_users
+from app.core.connections import ConnectionManager
+from app.main import app
+from app.storage.memory import MemoryStorage
 
 
 @pytest.fixture
@@ -41,7 +41,7 @@ def setup_app():
         "manager": manager,
         "client": TestClient(app),
         "token": token,
-        "auth_headers": {"Authorization": f"Bearer {token}"}
+        "auth_headers": {"Authorization": f"Bearer {token}"},
     }
 
     # Note: Can't call async clear() in sync fixture
@@ -57,11 +57,7 @@ class TestWebSocketBasics:
 
         with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Send subscribe message
-            websocket.send_json({
-                "type": "subscribe",
-                "topics": ["test-topic"],
-                "client_id": "test-client"
-            })
+            websocket.send_json({"type": "subscribe", "topics": ["test-topic"], "client_id": "test-client"})
 
             # Receive subscription confirmation
             response = websocket.receive_json()
@@ -78,11 +74,7 @@ class TestWebSocketBasics:
 
         with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Subscribe first
-            websocket.send_json({
-                "type": "subscribe",
-                "topics": ["test"],
-                "client_id": "test-client"
-            })
+            websocket.send_json({"type": "subscribe", "topics": ["test"], "client_id": "test-client"})
 
             # Wait for subscription confirmation
             websocket.receive_json()
@@ -103,23 +95,19 @@ class TestWebSocketBasics:
 
         with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Subscribe to multiple topics
-            websocket.send_json({
-                "type": "subscribe",
-                "topics": ["topic1", "topic2", "topic3"],
-                "client_id": "test-client"
-            })
+            websocket.send_json(
+                {"type": "subscribe", "topics": ["topic1", "topic2", "topic3"], "client_id": "test-client"}
+            )
 
             # Wait for subscription confirmation
             websocket.receive_json()
 
             # Unsubscribe from some topics
-            websocket.send_json({
-                "type": "unsubscribe",
-                "topics": ["topic1", "topic3"]
-            })
+            websocket.send_json({"type": "unsubscribe", "topics": ["topic1", "topic3"]})
 
             # Give it a moment to process
             import time
+
             time.sleep(0.1)
 
         # After websocket closes, check manager state (sync context)
@@ -133,10 +121,7 @@ class TestWebSocketBasics:
 
         with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Send invalid subscribe (missing required fields)
-            websocket.send_json({
-                "type": "subscribe",
-                "topics": []  # Empty topics invalid
-            })
+            websocket.send_json({"type": "subscribe", "topics": []})  # Empty topics invalid
 
             # Should receive error message
             response = websocket.receive_json()
@@ -151,20 +136,13 @@ class TestWebSocketBasics:
 
         with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Subscribe first
-            websocket.send_json({
-                "type": "subscribe",
-                "topics": ["test"],
-                "client_id": "test-client"
-            })
+            websocket.send_json({"type": "subscribe", "topics": ["test"], "client_id": "test-client"})
 
             # Wait for confirmation
             websocket.receive_json()
 
             # Send unknown message type
-            websocket.send_json({
-                "type": "unknown_type",
-                "data": "test"
-            })
+            websocket.send_json({"type": "unknown_type", "data": "test"})
 
             # Should receive error
             response = websocket.receive_json()
@@ -184,11 +162,7 @@ class TestWebSocketMessageDelivery:
 
         with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Subscribe to topic
-            websocket.send_json({
-                "type": "subscribe",
-                "topics": ["notifications"],
-                "client_id": "test-client"
-            })
+            websocket.send_json({"type": "subscribe", "topics": ["notifications"], "client_id": "test-client"})
 
             # Wait for subscription confirmation
             sub_response = websocket.receive_json()
@@ -200,13 +174,10 @@ class TestWebSocketMessageDelivery:
 
             def send_message():
                 time.sleep(0.2)  # Small delay
-                response = client.post(
+                client.post(
                     "/api/v1/messages",
-                    json={
-                        "topic": "notifications",
-                        "payload": {"user_id": 123, "message": "Hello WebSocket!"}
-                    },
-                    headers=auth_headers
+                    json={"topic": "notifications", "payload": {"user_id": 123, "message": "Hello WebSocket!"}},
+                    headers=auth_headers,
                 )
 
             # Start background thread to send message
@@ -238,11 +209,7 @@ class TestWebSocketMessageDelivery:
 
         with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Subscribe to topic1 only
-            websocket.send_json({
-                "type": "subscribe",
-                "topics": ["topic1"],
-                "client_id": "test-client"
-            })
+            websocket.send_json({"type": "subscribe", "topics": ["topic1"], "client_id": "test-client"})
 
             websocket.receive_json()  # Subscription confirmation
 
@@ -255,14 +222,14 @@ class TestWebSocketMessageDelivery:
                 client.post(
                     "/api/v1/messages",
                     json={"topic": "topic2", "payload": {"data": "should not receive"}},
-                    headers=auth_headers
+                    headers=auth_headers,
                 )
                 time.sleep(0.1)
                 # Send to subscribed topic
                 client.post(
                     "/api/v1/messages",
                     json={"topic": "topic1", "payload": {"data": "should receive"}},
-                    headers=auth_headers
+                    headers=auth_headers,
                 )
 
             thread = threading.Thread(target=send_messages)
