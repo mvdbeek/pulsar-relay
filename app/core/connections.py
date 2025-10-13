@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from typing import Optional
 
 from fastapi import WebSocket
 
@@ -142,7 +143,7 @@ class ConnectionManager:
 
         return successful_deliveries
 
-    async def get_connection_count(self, topic: str | None = None) -> int:
+    async def get_connection_count(self, topic: Optional[str] = None) -> int:
         """Get the number of active connections.
 
         Args:

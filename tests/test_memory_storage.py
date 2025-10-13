@@ -153,7 +153,7 @@ class TestMemoryStorage:
     async def test_health_check(self):
         """Test health check."""
         storage = MemoryStorage()
-        assert await storage.health_check() is True
+        assert await storage.health_check() == {"status": "healthy"}
 
     async def test_close(self):
         """Test close (no-op for memory storage)."""

@@ -23,7 +23,8 @@ class PollWaiter:
         self.client_id = client_id
         self.topics = set(topics)
         self.queue: asyncio.Queue = asyncio.Queue()
-        self.created_at = datetime.datetime.now(datetime.UTC)
+        # use timezone.utc to be explicit and mypy-friendly
+        self.created_at = datetime.datetime.now(datetime.timezone.utc)
 
     async def put_message(self, message: dict[str, Any]) -> None:
         """Add a message to the waiter's queue.
@@ -159,7 +160,7 @@ class PollManager:
         Returns:
             Number of waiters cleaned up
         """
-        now = datetime.datetime.now(datetime.UTC)
+        now = datetime.datetime.now(datetime.timezone.utc)
         stale_ids = []
 
         async with self._lock:

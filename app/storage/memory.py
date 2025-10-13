@@ -95,9 +95,9 @@ class MemoryStorage(StorageBackend):
         async with self._lock:
             return len(self._messages.get(topic, []))
 
-    async def health_check(self) -> bool:
+    async def health_check(self) -> dict:
         """Check if storage is healthy."""
-        return True
+        return {"status": "healthy"}
 
     async def close(self) -> None:
         """Close storage (no-op for memory storage)."""

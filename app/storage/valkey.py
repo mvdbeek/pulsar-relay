@@ -3,7 +3,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from glide import GlideClient, GlideClientConfiguration, NodeAddress
 from glide.async_commands.stream import ExclusiveIdBound, MaxId, MinId, TrimByMaxLen
@@ -116,7 +116,7 @@ class ValkeyStorage(StorageBackend):
 
         # Prepare stream entry as list of tuples (GLIDE API requirement)
         # Valkey Streams stores fields as key-value pairs
-        fields = [
+        fields: list[tuple[Union[str, bytes], Union[str, bytes]]] = [
             ("message_id", message_id),
             ("payload", json.dumps(payload)),
             ("timestamp", timestamp.isoformat()),
@@ -138,7 +138,9 @@ class ValkeyStorage(StorageBackend):
                 TrimByMaxLen(exact=True, threshold=self.max_messages_per_topic),
             )
 
-            logger.debug(f"Saved message {message_id} to topic {topic} with stream ID {stream_entry_id}")
+            logger.debug(
+                f"Saved message {message_id} to topic {topic} with stream ID {stream_entry_id.decode() if stream_entry_id else None}"
+            )
 
         except Exception as e:
             logger.error(f"Failed to save message to Valkey: {e}")

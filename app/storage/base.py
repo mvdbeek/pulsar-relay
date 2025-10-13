@@ -36,7 +36,7 @@ class StorageBackend(ABC):
         pass
 
     @abstractmethod
-    async def health_check(self) -> bool:
+    async def health_check(self) -> dict:
         """Check if storage backend is healthy."""
         pass
 

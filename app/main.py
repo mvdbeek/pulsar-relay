@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Union
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -38,13 +39,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Initialize storage based on configuration
     if settings.storage_backend == "valkey":
         log.info("Using Valkey storage backend")
-        storage = ValkeyStorage(
+        storage: Union[ValkeyStorage, MemoryStorage] = ValkeyStorage(
             host=settings.valkey_host,
             port=settings.valkey_port,
             max_messages_per_topic=settings.max_messages_per_topic,
             ttl_seconds=settings.persistent_tier_retention,
             use_tls=settings.valkey_use_tls,
         )
+        assert isinstance(storage, ValkeyStorage)
         # Connect to Valkey
         await storage.connect()
         log.info(f"Connected to Valkey at {settings.valkey_host}:{settings.valkey_port}")

@@ -23,7 +23,7 @@ def set_storage(storage: StorageBackend) -> None:
 @router.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
     """Basic health check endpoint."""
-    return HealthResponse(status="healthy", timestamp=datetime.datetime.now(datetime.UTC))
+    return HealthResponse(status="healthy", timestamp=datetime.datetime.now(datetime.timezone.utc))
 
 
 @router.get("/ready", response_model=ReadinessResponse)

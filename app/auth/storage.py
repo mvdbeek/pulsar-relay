@@ -40,6 +40,9 @@ class UserStorage(ABC):
         """Delete a user."""
         pass
 
+    def get_stats(self) -> dict:
+        return {}
+
 
 class InMemoryUserStorage(UserStorage):
     """In-memory user storage for development/testing."""
