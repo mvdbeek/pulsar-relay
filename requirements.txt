@@ -6,6 +6,10 @@ uvicorn[standard]==0.32.0
 # Valkey Client
 valkey-glide==1.2.0
 
+# auth
+pwdlib[argon2]==0.2.1
+pyjwt==2.10.1
+
 # Data Validation & Serialization
 pydantic==2.10.3
 pydantic-settings==2.6.1

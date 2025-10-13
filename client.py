@@ -12,11 +12,15 @@ async def consume_messages():
 
     async with websockets.connect(uri) as websocket:
         # Subscribe
-        await websocket.send(json.dumps({
-            "type": "subscribe",
-            "topics": ["notifications", "alerts"],
-            "client_id": "test",
-        }))
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "subscribe",
+                    "topics": ["notifications", "alerts"],
+                    "client_id": "test",
+                }
+            )
+        )
 
         # Receive messages
         async for message in websocket:
@@ -25,5 +29,6 @@ async def consume_messages():
 
             if data["type"] == "message":
                 print(f"Message payload: {data['payload']}")
+
 
 asyncio.run(consume_messages())

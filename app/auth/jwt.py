@@ -6,14 +6,14 @@ from typing import Optional
 
 import jwt
 from jwt import DecodeError, ExpiredSignatureError, InvalidTokenError
-from passlib.context import CryptContext
+from pwdlib import PasswordHash
 
 from app.auth.models import TokenPayload, User
 
 logger = logging.getLogger(__name__)
 
 # Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = PasswordHash.recommended()
 
 # JWT settings (should be loaded from config in production)
 SECRET_KEY = "your-secret-key-here-change-in-production"  # Should be in environment variable
