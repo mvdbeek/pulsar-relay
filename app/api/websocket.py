@@ -2,10 +2,10 @@
 
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
 from app.models import (
     WebSocketSubscribe,
@@ -22,6 +22,8 @@ from app.utils.metrics import (
     websocket_disconnections_total,
     active_websocket_connections,
 )
+from app.auth.jwt import decode_token
+from app.auth.dependencies import get_user_storage
 
 router = APIRouter(tags=["websocket"])
 logger = logging.getLogger(__name__)
@@ -44,11 +46,15 @@ def get_manager() -> ConnectionManager:
 
 
 @router.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(websocket: WebSocket, token: str = Query(..., description="JWT authentication token")):
     """WebSocket endpoint for real-time message delivery.
 
+    Authentication:
+    - Clients must provide a valid JWT token in the query parameter: /ws?token=<jwt_token>
+    - Token is validated before accepting the connection
+
     Protocol:
-    1. Client connects
+    1. Client connects with token
     2. Client sends subscribe message with topics
     3. Server confirms subscription
     4. Server pushes messages as they arrive
@@ -60,11 +66,38 @@ async def websocket_endpoint(websocket: WebSocket):
     client_topics: list[str] = []
     session_id = f"sess_{uuid.uuid4().hex[:12]}"
 
+    # Validate token before accepting connection
+    token_payload = decode_token(token)
+    if token_payload is None:
+        logger.warning(f"WebSocket connection rejected: Invalid token")
+        await websocket.close(code=1008, reason="Invalid or expired token")
+        return
+
+    # Verify user exists and is active
+    try:
+        user_storage = get_user_storage()
+        user = await user_storage.get_user_by_id(token_payload.sub)
+        if user is None or not user.is_active:
+            logger.warning(f"WebSocket connection rejected: User not found or inactive")
+            await websocket.close(code=1008, reason="User not found or inactive")
+            return
+
+        # Check if user has read permission
+        if "read" not in user.permissions:
+            logger.warning(f"WebSocket connection rejected: User lacks read permission")
+            await websocket.close(code=1008, reason="Permission denied: read permission required")
+            return
+
+    except Exception as e:
+        logger.error(f"Error validating user for WebSocket: {e}")
+        await websocket.close(code=1011, reason="Internal server error")
+        return
+
     try:
         await websocket.accept()
         websocket_connections_total.inc()
         active_websocket_connections.inc()
-        logger.info(f"WebSocket connection accepted: {session_id}")
+        logger.info(f"WebSocket connection accepted: {session_id} (user: {user.username})")
 
         # Wait for initial subscription message
         try:
@@ -80,7 +113,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 type="subscribed",
                 topics=client_topics,
                 session_id=session_id,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
             )
             await websocket.send_json(response.model_dump(mode='json'))
 
@@ -104,7 +137,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Handle different message types
                 if data.get("type") == "ping":
                     # Respond to ping
-                    pong = WebSocketPong(type="pong", timestamp=datetime.utcnow())
+                    pong = WebSocketPong(type="pong", timestamp=datetime.now(timezone.utc))
                     await websocket.send_json(pong.model_dump(mode='json'))
 
                 elif data.get("type") == "ack":

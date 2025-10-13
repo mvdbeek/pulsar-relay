@@ -1,6 +1,6 @@
 """Health and readiness check endpoints."""
 
-from datetime import datetime
+import datetime
 from typing import Optional
 
 from fastapi import APIRouter
@@ -23,7 +23,7 @@ def set_storage(storage: StorageBackend) -> None:
 @router.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
     """Basic health check endpoint."""
-    return HealthResponse(status="healthy", timestamp=datetime.utcnow())
+    return HealthResponse(status="healthy", timestamp=datetime.datetime.now(datetime.UTC))
 
 
 @router.get("/ready", response_model=ReadinessResponse)

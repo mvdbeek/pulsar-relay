@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -13,7 +15,9 @@ from app.storage.memory import MemoryStorage
 from app.storage.valkey import ValkeyStorage
 from app.core.connections import ConnectionManager
 from app.core.polling import PollManager
-from app.api import messages, health, websocket, polling
+from app.auth.storage import InMemoryUserStorage, create_default_users
+from app.auth.dependencies import set_user_storage
+from app.api import messages, health, websocket, polling, auth
 
 log = logging.getLogger(__name__)
 
@@ -24,23 +28,12 @@ try:
 except ImportError:
     pass  # uvloop not available, using default event loop
 
-# Create FastAPI app
-app = FastAPI(
-    title=settings.app_name,
-    version="0.1.0",
-    description="High-performance message proxy with WebSocket and long-polling support",
-)
 
-# Global instances
-storage: StorageBackend
-connection_manager: ConnectionManager
-poll_manager: PollManager
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize application on startup."""
-    global storage, connection_manager, poll_manager
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Manage application lifespan events (startup and shutdown)."""
+    # Startup: Initialize all services
+    log.info("Starting up application...")
 
     # Initialize storage based on configuration
     if settings.storage_backend == "valkey":
@@ -67,9 +60,16 @@ async def startup_event():
     poll_manager = PollManager()
     log.info("Initialized Poll Manager")
 
+    # Initialize user storage and create default users
+    user_storage = InMemoryUserStorage()
+    await create_default_users(user_storage)
+    set_user_storage(user_storage)
+    log.info("Initialized User Storage with default users")
+
     # Store in app state for access in routes
     app.state.storage = storage
     app.state.poll_manager = poll_manager
+    app.state.user_storage = user_storage
 
     # Inject dependencies into API routers
     messages.set_storage(storage)
@@ -78,18 +78,28 @@ async def startup_event():
     health.set_storage(storage)
     websocket.set_manager(connection_manager)
 
+    log.info("Application startup complete")
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown."""
-    global storage
+    yield  # Application is running
 
-    if storage:
-        await storage.close()
+    # Shutdown: Cleanup resources
+    log.info("Shutting down application...")
+    await storage.close()
+    log.info("Application shutdown complete")
+
+
+# Create FastAPI app with lifespan handler
+app = FastAPI(
+    title=settings.app_name,
+    version="0.1.0",
+    description="High-performance message proxy with WebSocket and long-polling support",
+    lifespan=lifespan,
+)
 
 
 # Include routers
 app.include_router(health.router)
+app.include_router(auth.router, prefix="/auth", tags=["authentication"])
 app.include_router(messages.router)
 app.include_router(websocket.router)
 app.include_router(polling.router, prefix="/messages", tags=["polling"])

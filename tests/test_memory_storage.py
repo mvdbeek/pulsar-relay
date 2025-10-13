@@ -1,7 +1,7 @@
 """Tests for in-memory storage backend."""
 
+import datetime
 import pytest
-from datetime import datetime
 
 from app.storage.memory import MemoryStorage
 
@@ -19,11 +19,11 @@ class TestMemoryStorage:
             "msg_1",
             "test-topic",
             {"data": "value1"},
-            datetime.utcnow(),
+            datetime.datetime.now(datetime.UTC),
             {"key": "value"},
         )
         await storage.save_message(
-            "msg_2", "test-topic", {"data": "value2"}, datetime.utcnow()
+            "msg_2", "test-topic", {"data": "value2"}, datetime.datetime.now(datetime.UTC)
         )
 
         # Retrieve messages
@@ -43,7 +43,7 @@ class TestMemoryStorage:
         # Save multiple messages
         for i in range(5):
             await storage.save_message(
-                f"msg_{i}", "test-topic", {"index": i}, datetime.utcnow()
+                f"msg_{i}", "test-topic", {"index": i}, datetime.datetime.now(datetime.UTC)
             )
 
         # Get with limit
@@ -60,7 +60,7 @@ class TestMemoryStorage:
         # Save messages
         for i in range(5):
             await storage.save_message(
-                f"msg_{i}", "test-topic", {"index": i}, datetime.utcnow()
+                f"msg_{i}", "test-topic", {"index": i}, datetime.datetime.now(datetime.UTC)
             )
 
         # Get messages since msg_2
@@ -85,7 +85,7 @@ class TestMemoryStorage:
         # Save 10 messages
         for i in range(10):
             await storage.save_message(
-                f"msg_{i}", "test-topic", {"index": i}, datetime.utcnow()
+                f"msg_{i}", "test-topic", {"index": i}, datetime.datetime.now(datetime.UTC)
             )
 
         # Trim to 5 messages
@@ -106,7 +106,7 @@ class TestMemoryStorage:
         # Save 3 messages
         for i in range(3):
             await storage.save_message(
-                f"msg_{i}", "test-topic", {"index": i}, datetime.utcnow()
+                f"msg_{i}", "test-topic", {"index": i}, datetime.datetime.now(datetime.UTC)
             )
 
         # Try to trim to 10 messages
@@ -121,10 +121,10 @@ class TestMemoryStorage:
 
         assert await storage.get_topic_length("test-topic") == 0
 
-        await storage.save_message("msg_1", "test-topic", {"data": 1}, datetime.utcnow())
+        await storage.save_message("msg_1", "test-topic", {"data": 1}, datetime.datetime.now(datetime.UTC))
         assert await storage.get_topic_length("test-topic") == 1
 
-        await storage.save_message("msg_2", "test-topic", {"data": 2}, datetime.utcnow())
+        await storage.save_message("msg_2", "test-topic", {"data": 2}, datetime.datetime.now(datetime.UTC))
         assert await storage.get_topic_length("test-topic") == 2
 
     async def test_max_messages_per_topic(self):
@@ -134,7 +134,7 @@ class TestMemoryStorage:
         # Save 10 messages
         for i in range(10):
             await storage.save_message(
-                f"msg_{i}", "test-topic", {"index": i}, datetime.utcnow()
+                f"msg_{i}", "test-topic", {"index": i}, datetime.datetime.now(datetime.UTC)
             )
 
         # Should only have last 5 messages
@@ -149,9 +149,9 @@ class TestMemoryStorage:
         """Test storing messages in multiple topics."""
         storage = MemoryStorage()
 
-        await storage.save_message("msg_1", "topic1", {"data": 1}, datetime.utcnow())
-        await storage.save_message("msg_2", "topic2", {"data": 2}, datetime.utcnow())
-        await storage.save_message("msg_3", "topic1", {"data": 3}, datetime.utcnow())
+        await storage.save_message("msg_1", "topic1", {"data": 1}, datetime.datetime.now(datetime.UTC))
+        await storage.save_message("msg_2", "topic2", {"data": 2}, datetime.datetime.now(datetime.UTC))
+        await storage.save_message("msg_3", "topic1", {"data": 3}, datetime.datetime.now(datetime.UTC))
 
         topic1_messages = await storage.get_messages("topic1")
         topic2_messages = await storage.get_messages("topic2")
@@ -175,8 +175,8 @@ class TestMemoryStorage:
         """Test clearing all messages."""
         storage = MemoryStorage()
 
-        await storage.save_message("msg_1", "topic1", {"data": 1}, datetime.utcnow())
-        await storage.save_message("msg_2", "topic2", {"data": 2}, datetime.utcnow())
+        await storage.save_message("msg_1", "topic1", {"data": 1}, datetime.datetime.now(datetime.UTC))
+        await storage.save_message("msg_2", "topic2", {"data": 2}, datetime.datetime.now(datetime.UTC))
 
         await storage.clear()
 

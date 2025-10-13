@@ -9,20 +9,40 @@ from app.main import app
 from app.storage.memory import MemoryStorage
 from app.core.connections import ConnectionManager
 from app.api import messages, health, websocket
+from app.auth.storage import InMemoryUserStorage, create_default_users
+from app.auth.dependencies import set_user_storage
+from app.auth.jwt import create_access_token
 
 
 @pytest.fixture
 def setup_app():
-    """Set up app with fresh storage and connection manager."""
+    """Set up app with fresh storage, connection manager, and authentication."""
     storage = MemoryStorage()
     manager = ConnectionManager()
+
+    # Set up authentication
+    user_storage = InMemoryUserStorage()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(create_default_users(user_storage))
+    set_user_storage(user_storage)
+    app.state.user_storage = user_storage
+
+    # Get test user and create token
+    test_user = loop.run_until_complete(user_storage.get_user_by_username("user"))
+    token = create_access_token(test_user)
 
     messages.set_storage(storage)
     messages.set_manager(manager)
     health.set_storage(storage)
     websocket.set_manager(manager)
 
-    yield {"storage": storage, "manager": manager, "client": TestClient(app)}
+    yield {
+        "storage": storage,
+        "manager": manager,
+        "client": TestClient(app),
+        "token": token,
+        "auth_headers": {"Authorization": f"Bearer {token}"}
+    }
 
     # Note: Can't call async clear() in sync fixture
 
@@ -33,8 +53,9 @@ class TestWebSocketBasics:
     def test_websocket_connect_and_subscribe(self, setup_app):
         """Test WebSocket connection and subscription."""
         client = setup_app["client"]
+        token = setup_app["token"]
 
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Send subscribe message
             websocket.send_json({
                 "type": "subscribe",
@@ -53,8 +74,9 @@ class TestWebSocketBasics:
     def test_websocket_ping_pong(self, setup_app):
         """Test WebSocket ping/pong."""
         client = setup_app["client"]
+        token = setup_app["token"]
 
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Subscribe first
             websocket.send_json({
                 "type": "subscribe",
@@ -77,8 +99,9 @@ class TestWebSocketBasics:
     def test_websocket_unsubscribe(self, setup_app):
         """Test WebSocket unsubscribe."""
         client = setup_app["client"]
+        token = setup_app["token"]
 
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Subscribe to multiple topics
             websocket.send_json({
                 "type": "subscribe",
@@ -106,8 +129,9 @@ class TestWebSocketBasics:
     def test_websocket_invalid_subscribe_message(self, setup_app):
         """Test WebSocket with invalid subscribe message."""
         client = setup_app["client"]
+        token = setup_app["token"]
 
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Send invalid subscribe (missing required fields)
             websocket.send_json({
                 "type": "subscribe",
@@ -123,8 +147,9 @@ class TestWebSocketBasics:
     def test_websocket_unknown_message_type(self, setup_app):
         """Test WebSocket with unknown message type."""
         client = setup_app["client"]
+        token = setup_app["token"]
 
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Subscribe first
             websocket.send_json({
                 "type": "subscribe",
@@ -154,8 +179,10 @@ class TestWebSocketMessageDelivery:
     def test_receive_message_after_subscription(self, setup_app):
         """Test receiving messages via WebSocket."""
         client = setup_app["client"]
+        token = setup_app["token"]
+        auth_headers = setup_app["auth_headers"]
 
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Subscribe to topic
             websocket.send_json({
                 "type": "subscribe",
@@ -178,7 +205,8 @@ class TestWebSocketMessageDelivery:
                     json={
                         "topic": "notifications",
                         "payload": {"user_id": 123, "message": "Hello WebSocket!"}
-                    }
+                    },
+                    headers=auth_headers
                 )
 
             # Start background thread to send message
@@ -205,8 +233,10 @@ class TestWebSocketMessageDelivery:
     def test_client_only_receives_subscribed_topics(self, setup_app):
         """Test that clients only receive messages for subscribed topics."""
         client = setup_app["client"]
+        token = setup_app["token"]
+        auth_headers = setup_app["auth_headers"]
 
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Subscribe to topic1 only
             websocket.send_json({
                 "type": "subscribe",
@@ -224,13 +254,15 @@ class TestWebSocketMessageDelivery:
                 # Send to non-subscribed topic
                 client.post(
                     "/api/v1/messages",
-                    json={"topic": "topic2", "payload": {"data": "should not receive"}}
+                    json={"topic": "topic2", "payload": {"data": "should not receive"}},
+                    headers=auth_headers
                 )
                 time.sleep(0.1)
                 # Send to subscribed topic
                 client.post(
                     "/api/v1/messages",
-                    json={"topic": "topic1", "payload": {"data": "should receive"}}
+                    json={"topic": "topic1", "payload": {"data": "should receive"}},
+                    headers=auth_headers
                 )
 
             thread = threading.Thread(target=send_messages)

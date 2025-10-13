@@ -1,10 +1,10 @@
 """Long polling manager for handling HTTP long polling clients."""
 
 import asyncio
+import datetime
 import logging
 from collections import defaultdict
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Set
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ class PollWaiter:
         self.client_id = client_id
         self.topics = set(topics)
         self.queue: asyncio.Queue = asyncio.Queue()
-        self.created_at = datetime.utcnow()
+        self.created_at = datetime.datetime.now(datetime.UTC)
 
     async def put_message(self, message: Dict[str, Any]) -> None:
         """Add a message to the waiter's queue.
@@ -164,7 +164,7 @@ class PollManager:
         Returns:
             Number of waiters cleaned up
         """
-        now = datetime.utcnow()
+        now = datetime.datetime.now(datetime.UTC)
         stale_ids = []
 
         async with self._lock:

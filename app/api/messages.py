@@ -2,10 +2,10 @@
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 
 from app.models import (
     Message,
@@ -19,6 +19,8 @@ from app.storage.base import StorageBackend
 from app.core.connections import ConnectionManager
 from app.core.polling import PollManager
 from app.utils.metrics import messages_received_total, message_latency_seconds
+from app.auth.models import User
+from app.auth.dependencies import get_current_user, require_permission
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
@@ -65,7 +67,10 @@ def get_manager() -> Optional[ConnectionManager]:
 
 
 @router.post("/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
-async def create_message(message: Message) -> MessageResponse:
+async def create_message(
+    message: Message,
+    current_user: User = Depends(require_permission("write")),
+) -> MessageResponse:
     """Create a new message and publish to topic.
 
     Args:
@@ -78,7 +83,7 @@ async def create_message(message: Message) -> MessageResponse:
 
     # Generate unique message ID
     message_id = f"msg_{uuid.uuid4().hex[:12]}"
-    timestamp = datetime.utcnow()
+    timestamp = datetime.now(timezone.utc)
 
     # Track metrics
     messages_received_total.labels(topic=message.topic).inc()
@@ -121,7 +126,10 @@ async def create_message(message: Message) -> MessageResponse:
 
 
 @router.post("/messages/bulk", response_model=BulkMessageResponse, status_code=status.HTTP_207_MULTI_STATUS)
-async def create_bulk_messages(request: BulkMessageRequest) -> BulkMessageResponse:
+async def create_bulk_messages(
+    request: BulkMessageRequest,
+    current_user: User = Depends(require_permission("write")),
+) -> BulkMessageResponse:
     """Create multiple messages in bulk.
 
     Args:
@@ -139,7 +147,7 @@ async def create_bulk_messages(request: BulkMessageRequest) -> BulkMessageRespon
         try:
             # Generate unique message ID
             message_id = f"msg_{uuid.uuid4().hex[:12]}"
-            timestamp = datetime.utcnow()
+            timestamp = datetime.now(timezone.utc)
 
             # Save to storage
             await storage.save_message(

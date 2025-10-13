@@ -6,17 +6,35 @@ from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.storage.memory import MemoryStorage
 from app.api import messages, health
+from app.auth.storage import InMemoryUserStorage, create_default_users
+from app.auth.dependencies import set_user_storage
+from app.auth.jwt import create_access_token
 
 
 @pytest.fixture
 async def client():
-    """Create test client with fresh storage."""
+    """Create test client with fresh storage and authentication."""
+    # Set up message storage
     storage = MemoryStorage()
     messages.set_storage(storage)
     health.set_storage(storage)
 
+    # Set up authentication
+    user_storage = InMemoryUserStorage()
+    await create_default_users(user_storage)
+    set_user_storage(user_storage)
+    app.state.user_storage = user_storage
+
+    # Get test user and create token
+    test_user = await user_storage.get_user_by_username("user")
+    token = create_access_token(test_user)
+
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {token}"}
+    ) as ac:
         yield ac
 
     await storage.clear()

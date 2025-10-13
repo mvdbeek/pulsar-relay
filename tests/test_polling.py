@@ -1,8 +1,8 @@
 """Tests for long polling functionality."""
 
 import asyncio
+import datetime
 import pytest
-from datetime import datetime
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -146,7 +146,7 @@ class TestPollManager:
 
         # Manually set created_at to past
         from datetime import timedelta
-        waiter.created_at = datetime.utcnow() - timedelta(seconds=400)
+        waiter.created_at = datetime.datetime.now(datetime.UTC) - timedelta(seconds=400)
 
         # Cleanup with 300 second max age
         removed = await poll_manager.cleanup_stale_waiters(max_age_seconds=300)
@@ -156,10 +156,36 @@ class TestPollManager:
 
 
 @pytest.fixture
-def test_client(test_storage, poll_manager):
+def user_storage():
+    """Create user storage with default users."""
+    from app.auth.storage import InMemoryUserStorage, create_default_users
+    from app.auth.dependencies import set_user_storage
+    import asyncio
+
+    storage = InMemoryUserStorage()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(create_default_users(storage))
+    set_user_storage(storage)
+    return storage
+
+
+@pytest.fixture
+def auth_token(user_storage):
+    """Create an auth token for a test user."""
+    from app.auth.jwt import create_access_token
+    import asyncio
+
+    loop = asyncio.get_event_loop()
+    user = loop.run_until_complete(user_storage.get_user_by_username("user"))
+    return create_access_token(user)
+
+
+@pytest.fixture
+def test_client(test_storage, poll_manager, user_storage):
     """Create a test client with properly initialized app state."""
     app.state.storage = test_storage
     app.state.poll_manager = poll_manager
+    app.state.user_storage = user_storage
     return TestClient(app)
 
 
@@ -167,7 +193,7 @@ class TestPollingEndpoint:
     """Test the long polling HTTP endpoint."""
 
     @pytest.mark.asyncio
-    async def test_poll_returns_200(self, test_client):
+    async def test_poll_returns_200(self, test_client, auth_token):
         """Test polling endpoint returns successfully."""
         # Basic test that endpoint works and returns valid response
         response = test_client.post(
@@ -176,6 +202,7 @@ class TestPollingEndpoint:
                 "topics": ["test-topic"],
                 "timeout": 1,  # Short timeout
             },
+            headers={"Authorization": f"Bearer {auth_token}"}
         )
 
         assert response.status_code == 200
@@ -185,7 +212,7 @@ class TestPollingEndpoint:
         assert isinstance(data["messages"], list)
 
     @pytest.mark.asyncio
-    async def test_poll_timeout(self, test_client):
+    async def test_poll_timeout(self, test_client, auth_token):
         """Test polling times out when no messages arrive."""
         # Poll with short timeout
         response = test_client.post(
@@ -195,6 +222,7 @@ class TestPollingEndpoint:
                 "since": None,
                 "timeout": 1,  # 1 second timeout
             },
+            headers={"Authorization": f"Bearer {auth_token}"}
         )
 
         assert response.status_code == 200
@@ -214,17 +242,19 @@ class TestPollingEndpoint:
         pass
 
     @pytest.mark.asyncio
-    async def test_poll_with_since_parameter(self, test_storage, test_client):
+    async def test_poll_with_since_parameter(self, test_storage, test_client, auth_token):
         """Test polling with since parameter for pagination."""
+        from datetime import timezone
+
         # Save multiple messages
         await test_storage.save_message(
-            "msg_1", "test-topic", {"index": 1}, datetime.utcnow()
+            "msg_1", "test-topic", {"index": 1}, datetime.now(timezone.utc)
         )
         await test_storage.save_message(
-            "msg_2", "test-topic", {"index": 2}, datetime.utcnow()
+            "msg_2", "test-topic", {"index": 2}, datetime.now(timezone.utc)
         )
         await test_storage.save_message(
-            "msg_3", "test-topic", {"index": 3}, datetime.utcnow()
+            "msg_3", "test-topic", {"index": 3}, datetime.now(timezone.utc)
         )
 
         # Poll with since=msg_1 (should get msg_2 and msg_3)
@@ -235,6 +265,7 @@ class TestPollingEndpoint:
                 "since": {"test-topic": "msg_1"},
                 "timeout": 1,
             },
+            headers={"Authorization": f"Bearer {auth_token}"}
         )
 
         assert response.status_code == 200
@@ -243,7 +274,7 @@ class TestPollingEndpoint:
         assert len(data["messages"]) >= 2
 
     @pytest.mark.asyncio
-    async def test_poll_invalid_request(self, test_client):
+    async def test_poll_invalid_request(self, test_client, auth_token):
         """Test polling with invalid request."""
         # Empty topics list
         response = test_client.post(
@@ -252,14 +283,18 @@ class TestPollingEndpoint:
                 "topics": [],
                 "timeout": 30,
             },
+            headers={"Authorization": f"Bearer {auth_token}"}
         )
 
         assert response.status_code == 422  # Validation error
 
     @pytest.mark.asyncio
-    async def test_poll_stats_endpoint(self, test_client):
+    async def test_poll_stats_endpoint(self, test_client, auth_token):
         """Test the poll stats endpoint."""
-        response = test_client.get("/messages/poll/stats")
+        response = test_client.get(
+            "/messages/poll/stats",
+            headers={"Authorization": f"Bearer {auth_token}"}
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -267,7 +302,7 @@ class TestPollingEndpoint:
         assert "subscribed_topics" in data
 
     @pytest.mark.asyncio
-    async def test_poll_multiple_topics(self, test_client):
+    async def test_poll_multiple_topics(self, test_client, auth_token):
         """Test polling multiple topics simultaneously."""
         response = test_client.post(
             "/messages/poll",
@@ -276,6 +311,7 @@ class TestPollingEndpoint:
                 "since": None,
                 "timeout": 1,
             },
+            headers={"Authorization": f"Bearer {auth_token}"}
         )
 
         assert response.status_code == 200

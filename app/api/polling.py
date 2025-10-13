@@ -3,11 +3,13 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel, Field
 
 from app.core.polling import PollManager
 from app.storage.base import StorageBackend
+from app.auth.models import User
+from app.auth.dependencies import get_current_user, require_permission
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,7 @@ class PollResponse(BaseModel):
 async def long_poll(
     poll_request: PollRequest,
     request: Request,
+    current_user: User = Depends(require_permission("read")),
 ) -> PollResponse:
     """Long polling endpoint for receiving messages.
 
@@ -134,7 +137,10 @@ async def long_poll(
 
 
 @router.get("/poll/stats")
-async def get_poll_stats(request: Request) -> Dict[str, Any]:
+async def get_poll_stats(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
     """Get statistics about active long polling clients.
 
     Args:

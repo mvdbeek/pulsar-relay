@@ -1,7 +1,8 @@
 """Tests for Pydantic models."""
 
+import datetime
+
 import pytest
-from datetime import datetime
 from pydantic import ValidationError
 
 from app.models import (
@@ -82,7 +83,7 @@ class TestMessageResponse:
 
     def test_valid_response(self):
         """Test creating a valid message response."""
-        timestamp = datetime.utcnow()
+        timestamp = datetime.datetime.now(datetime.UTC)
         resp = MessageResponse(
             message_id="msg_abc123", topic="notifications", timestamp=timestamp
         )
