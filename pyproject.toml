@@ -3,6 +3,9 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-v --cov=app --cov-report=term-missing"
+markers = [
+    "integration: marks tests as integration tests (require external services like Valkey)",
+]
 
 [tool.black]
 line-length = 100

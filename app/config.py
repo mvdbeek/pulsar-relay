@@ -11,11 +11,14 @@ class Settings(BaseSettings):
     http_port: int = 8080
     workers: int = 4
 
+    # Storage Backend Selection
+    storage_backend: Literal["memory", "valkey"] = "memory"
+
     # Valkey Configuration
     valkey_host: str = "localhost"
     valkey_port: int = 6379
     valkey_password: str = ""
-    valkey_db: int = 0
+    valkey_use_tls: bool = False
 
     # Storage Configuration
     hot_tier_retention: int = 600  # 10 minutes in seconds
