@@ -8,9 +8,12 @@ from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config import settings
+from app.storage.base import StorageBackend
 from app.storage.memory import MemoryStorage
+from app.storage.valkey import ValkeyStorage
 from app.core.connections import ConnectionManager
-from app.api import messages, health, websocket
+from app.core.polling import PollManager
+from app.api import messages, health, websocket, polling
 
 log = logging.getLogger(__name__)
 
@@ -29,25 +32,49 @@ app = FastAPI(
 )
 
 # Global instances
-storage: MemoryStorage
+storage: StorageBackend
 connection_manager: ConnectionManager
+poll_manager: PollManager
 
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize application on startup."""
-    global storage, connection_manager
+    global storage, connection_manager, poll_manager
 
-    # Initialize storage
-    storage = MemoryStorage(max_messages_per_topic=settings.max_messages_per_topic)
+    # Initialize storage based on configuration
+    if settings.storage_backend == "valkey":
+        log.info("Using Valkey storage backend")
+        storage = ValkeyStorage(
+            host=settings.valkey_host,
+            port=settings.valkey_port,
+            max_messages_per_topic=settings.max_messages_per_topic,
+            ttl_seconds=settings.persistent_tier_retention,
+            use_tls=settings.valkey_use_tls,
+        )
+        # Connect to Valkey
+        await storage.connect()
+        log.info(f"Connected to Valkey at {settings.valkey_host}:{settings.valkey_port}")
+    else:
+        log.info("Using in-memory storage backend")
+        storage = MemoryStorage(max_messages_per_topic=settings.max_messages_per_topic)
 
     # Initialize connection manager
     connection_manager = ConnectionManager()
-    log.error("Initialized Connection Manager %s", connection_manager)
+    log.info("Initialized Connection Manager %s", connection_manager)
+
+    # Initialize poll manager
+    poll_manager = PollManager()
+    log.info("Initialized Poll Manager")
+
+    # Store in app state for access in routes
+    app.state.storage = storage
+    app.state.poll_manager = poll_manager
 
     # Inject dependencies into API routers
     messages.set_storage(storage)
     messages.set_manager(connection_manager)
+    messages.set_poll_manager(poll_manager)
     health.set_storage(storage)
     websocket.set_manager(connection_manager)
 
@@ -65,6 +92,7 @@ async def shutdown_event():
 app.include_router(health.router)
 app.include_router(messages.router)
 app.include_router(websocket.router)
+app.include_router(polling.router, prefix="/messages", tags=["polling"])
 
 # Initialize Prometheus metrics
 Instrumentator().instrument(app).expose(app, endpoint="/metrics")

@@ -17,6 +17,7 @@ from app.models import (
 )
 from app.storage.base import StorageBackend
 from app.core.connections import ConnectionManager
+from app.core.polling import PollManager
 from app.utils.metrics import messages_received_total, message_latency_seconds
 
 log = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ router = APIRouter(prefix="/api/v1", tags=["messages"])
 # Dependencies will be injected
 _storage: Optional[StorageBackend] = None
 _manager: Optional[ConnectionManager] = None
+_poll_manager: Optional[PollManager] = None
 
 
 def set_storage(storage: StorageBackend) -> None:
@@ -39,6 +41,12 @@ def set_manager(manager: ConnectionManager) -> None:
     """Set the connection manager for the messages API."""
     global _manager
     _manager = manager
+
+
+def set_poll_manager(poll_manager: PollManager) -> None:
+    """Set the poll manager for the messages API."""
+    global _poll_manager
+    _poll_manager = poll_manager
 
 
 def get_storage() -> StorageBackend:
@@ -98,6 +106,17 @@ async def create_message(message: Message) -> MessageResponse:
         )
         await manager.broadcast(message.topic, ws_message.model_dump(mode='json'))
 
+    # Broadcast to long polling clients
+    if _poll_manager:
+        poll_message = {
+            "topic": message.topic,
+            "message_id": message_id,
+            "payload": message.payload,
+            "timestamp": timestamp.isoformat(),
+            "metadata": message.metadata or {},
+        }
+        await _poll_manager.broadcast_to_topic(message.topic, poll_message)
+
     return MessageResponse(message_id=message_id, topic=message.topic, timestamp=timestamp)
 
 
@@ -143,6 +162,17 @@ async def create_bulk_messages(request: BulkMessageRequest) -> BulkMessageRespon
                     metadata=message.metadata,
                 )
                 await manager.broadcast(message.topic, ws_message.model_dump(mode='json'))
+
+            # Broadcast to long polling clients
+            if _poll_manager:
+                poll_message = {
+                    "topic": message.topic,
+                    "message_id": message_id,
+                    "payload": message.payload,
+                    "timestamp": timestamp.isoformat(),
+                    "metadata": message.metadata or {},
+                }
+                await _poll_manager.broadcast_to_topic(message.topic, poll_message)
 
             results.append(
                 BulkMessageResult(
