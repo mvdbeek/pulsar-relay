@@ -17,7 +17,6 @@ A high-performance message proxy system for real-time message delivery to client
 
 ### Prerequisites
 
-- Go 1.21+
 - Valkey (or Redis 7+) with AOF/RDB persistence enabled
 - Docker (optional)
 
@@ -28,9 +27,6 @@ A high-performance message proxy system for real-time message delivery to client
 git clone https://github.com/yourusername/pulsar-proxy.git
 cd pulsar-proxy
 
-# Install dependencies
-go mod download
-
 # Set up configuration
 cp config.example.yaml config.yaml
 # Edit config.yaml with your settings
@@ -38,18 +34,6 @@ cp config.example.yaml config.yaml
 # Start Valkey (if not already running)
 docker run -d -p 6379:6379 -v valkey-data:/data valkey/valkey --appendonly yes
 
-# Start the server
-make run
-```
-
-### Using Docker
-
-```bash
-# Build the image
-docker build -t pulsar-proxy:latest .
-
-# Run with Docker Compose
-docker-compose up -d
 ```
 
 ## Usage
@@ -212,19 +196,6 @@ See [API.md](./API.md) for complete API documentation.
 - `GET /ready` - Readiness check endpoint
 - `GET /metrics` - Prometheus metrics
 
-## Running with Docker Compose
-
-```bash
-# Start all services (proxy + valkey)
-docker-compose up -d
-
-# View logs
-docker-compose logs -f proxy
-
-# Check Valkey persistence status
-docker-compose exec valkey valkey-cli INFO persistence
-```
-
 ## Monitoring
 
 ### Prometheus Metrics
@@ -259,12 +230,7 @@ valkey-cli SLOWLOG GET 10
 
 ### Benchmarks
 
-Single instance (4 CPU cores, 8GB RAM):
-
-- **Throughput**: 15,000 messages/second
-- **Latency**: p50: 25ms, p95: 80ms, p99: 150ms
-- **Connections**: 12,000 concurrent WebSocket connections
-- **Long-polling**: 6,000 concurrent requests
+See [BENCHMARK_RESULTS.md](./BENCHMARK_RESULTS.md)
 
 ### Valkey Tuning
 
@@ -355,15 +321,5 @@ MIT License - see [LICENSE](./LICENSE) for details.
 ## Support
 
 - Documentation: [docs/](./docs/)
-- Issues: [GitHub Issues](https://github.com/yourusername/pulsar-proxy/issues)
-- Discussions: [GitHub Discussions](https://github.com/yourusername/pulsar-proxy/discussions)
-
-## Roadmap
-
-- [ ] Support for message priority queues
-- [ ] Message filtering and routing rules
-- [ ] GraphQL subscription support
-- [ ] gRPC streaming support
-- [ ] Built-in message replay UI
-- [ ] Stream compaction for efficient storage
-- [ ] Multi-topic wildcard subscriptions
+- Issues: [GitHub Issues](https://github.com/mvdbeek/pulsar-proxy/issues)
+- Discussions: [GitHub Discussions](https://github.com/mvdbeek/pulsar-proxy/discussions)

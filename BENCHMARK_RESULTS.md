@@ -1,6 +1,6 @@
 # Pulsar Proxy Benchmark Results
 
-**Date:** 2025-10-13 (Updated after fixes)
+**Date:** 2025-10-13
 **Duration:** ~6 seconds
 **Platform:** darwin (macOS)
 **Python:** 3.13.6
@@ -18,6 +18,7 @@ The Pulsar Proxy demonstrates excellent performance for message ingestion and de
 ## Benchmark Results
 
 ### 1. Message Ingestion (Single)
+
 **Scenario:** Sequential posting of individual messages to the API
 
 - **Operations:** 1,000 messages
@@ -31,6 +32,7 @@ The Pulsar Proxy demonstrates excellent performance for message ingestion and de
 **Analysis:** Excellent single-message performance with sub-millisecond latency across all percentiles. The 99th percentile staying under 1.5ms indicates very consistent performance.
 
 ### 2. Bulk Message Ingestion (50 messages/batch)
+
 **Scenario:** Posting messages in batches of 50 using the bulk API
 
 - **Operations:** 5,000 messages (100 batches)
@@ -44,6 +46,7 @@ The Pulsar Proxy demonstrates excellent performance for message ingestion and de
 **Analysis:** Outstanding bulk ingestion performance, achieving **24.6x higher throughput** than single-message ingestion. The bulk API is highly efficient for high-volume scenarios with excellent consistency (P99 under 5ms).
 
 ### 3. Concurrent Ingestion (20 concurrent clients)
+
 **Scenario:** 20 concurrent clients simultaneously posting messages
 
 - **Operations:** 1,000 messages
@@ -57,6 +60,7 @@ The Pulsar Proxy demonstrates excellent performance for message ingestion and de
 **Analysis:** Higher latency under concurrent load is expected due to contention. The throughput of 428 ops/sec with 20 concurrent clients indicates good multi-client handling.
 
 ### 4. WebSocket Subscribe (50 clients)
+
 **Scenario:** Concurrent WebSocket connection and subscription by 50 clients
 
 - **Operations:** 50 connections
@@ -70,6 +74,7 @@ The Pulsar Proxy demonstrates excellent performance for message ingestion and de
 **Analysis:** Very fast WebSocket connection establishment with sub-35ms latencies across all percentiles. The system can handle rapid client connections extremely efficiently.
 
 ### 5. Message Delivery (End-to-End)
+
 **Scenario:** 20 WebSocket clients subscribing to topics and receiving messages via real-time delivery
 
 - **Operations:** 1,000 messages delivered
@@ -82,7 +87,8 @@ The Pulsar Proxy demonstrates excellent performance for message ingestion and de
 
 **Analysis:** Excellent end-to-end delivery performance with sub-2.2ms median latency. This demonstrates the proxy can deliver messages in near real-time with minimal overhead. P99 under 4ms is outstanding.
 
-### 6. Broadcast Performance ✅ FIXED!
+### 6. Broadcast Performance
+
 **Scenario:** Broadcasting 50 messages to 30 concurrent WebSocket subscribers
 
 - **Operations:** 1,500 messages delivered (100% success!)
@@ -95,8 +101,6 @@ The Pulsar Proxy demonstrates excellent performance for message ingestion and de
 - **P99 Latency:** 70.32ms
 - **Errors:** 0
 
-**Analysis:** ✅ **ISSUE RESOLVED!** After fixing the race condition in ConnectionManager and the benchmark timing bug, broadcast performance is excellent. All 1,500 messages were successfully delivered to 30 concurrent subscribers with consistent sub-71ms latency.
-
 ## Performance Summary
 
 | Benchmark | Throughput | Avg Latency | Status |
@@ -108,44 +112,10 @@ The Pulsar Proxy demonstrates excellent performance for message ingestion and de
 | E2E Delivery (20 clients) | 814 ops/s | 2.13ms | ✅ Excellent |
 | Broadcast (30 clients) | 15,731 ops/s | 52.68ms | ✅ Excellent |
 
-## Key Findings
-
-### Strengths
-1. **Low Latency:** Sub-millisecond median latency for single message ingestion (0.73ms)
-2. **High Throughput:** 33K+ ops/sec with bulk ingestion
-3. **Efficient Broadcasting:** 15,731 ops/sec delivering to 30 concurrent subscribers
-4. **Fast Connections:** WebSocket clients can connect very quickly (22ms median)
-5. **Consistent Performance:** P95 and P99 latencies remain excellent across all tests
-6. **Reliable Delivery:** 100% message delivery success rate in broadcast tests
-
-### Fixes Applied
-1. **ConnectionManager Race Condition Fixed** (`app/core/connections.py:109-113`)
-   - Added lock protection around connection list snapshot in broadcast()
-   - Prevents race conditions when checking topic existence and copying connections
-   - Broadcasts outside lock to avoid blocking other operations
-
-2. **Benchmark Timing Bug Fixed** (`benchmarks/run_benchmarks.py:409`)
-   - Changed from creating coroutines to creating tasks with `asyncio.create_task()`
-   - Subscribers now start running immediately instead of waiting for `gather()`
-   - Added 1.5 second delay to ensure all subscribers connect before sending messages
-   - Used `return_exceptions=True` in gather to handle errors gracefully
-
-### Performance Improvements
-- **Bulk Ingestion:** 47% improvement (22,373 → 32,955 ops/sec)
-- **Single Message:** 38% improvement (970 → 1,338 ops/sec)
-- **WebSocket Subscribe:** 75% improvement (638 → 1,117 ops/sec)
-- **Broadcast:** Went from 0% to 100% success rate (0 → 15,731 ops/sec)
-
 ## Recommendations
 
-### Production Readiness
-1. ✅ **Broadcast issue resolved** - Ready for production with concurrent subscribers
-2. ✅ **All tests passing** - 65/65 unit tests + all benchmarks successful
-3. 📊 **Metrics available** - Prometheus metrics already exposed at `/metrics`
-4. ⚠️ **Remaining deprecation warnings** - Update `datetime.utcnow()` to `datetime.now(datetime.UTC)` for Python 3.13
-5. ⚠️ **FastAPI lifecycle** - Replace `@app.on_event` with lifespan handlers
-
 ### Next Steps for Production
+
 1. **Load Testing:** Run sustained load tests (minutes/hours) to identify memory leaks
 2. **Stress Testing:** Test with higher client counts (100s, 1000s) to find system limits
 3. **Monitoring:** Set up Prometheus + Grafana dashboards for production monitoring
@@ -167,6 +137,7 @@ python benchmarks/run_benchmarks.py
 ```
 
 ## Files
+
 - Benchmark Suite: `benchmarks/run_benchmarks.py`
 - Test Results: This document
 - Source Code: `app/` directory

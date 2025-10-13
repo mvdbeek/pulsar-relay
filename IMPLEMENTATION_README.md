@@ -18,8 +18,6 @@ High-performance message proxy built with FastAPI, supporting WebSocket and long
 - Documentation
 
 ⏳ **Pending:**
-- Valkey storage integration
-- Long-polling endpoints
 - Rate limiting
 - Authentication (JWT)
 
@@ -401,12 +399,10 @@ python -m memory_profiler app/storage/memory.py
 
 ## Next Steps
 
-1. **Valkey Integration** - Add persistent storage backend
-2. **Long-Polling** - Implement HTTP long-polling endpoints
-3. **Authentication** - Add JWT token validation
-4. **Rate Limiting** - Implement per-client rate limits
-5. **Docker** - Create Docker image and compose file
-6. **CI/CD** - Set up GitHub Actions for testing
+1. **Authentication** - Add JWT token validation
+2. **Rate Limiting** - Implement per-client rate limits
+3. **Docker** - Create Docker image and compose file
+4. **CI/CD** - Set up GitHub Actions for testing
 
 ## Contributing
 
