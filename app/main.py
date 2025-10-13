@@ -121,15 +121,3 @@ async def global_exception_handler(request, exc):
             "details": str(exc) if settings.log_level == "DEBUG" else None,
         },
     )
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(
-        "app.main:app",
-        host="0.0.0.0",
-        port=settings.http_port,
-        reload=True,
-        log_level=settings.log_level.lower(),
-    )

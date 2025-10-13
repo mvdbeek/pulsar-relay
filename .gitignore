@@ -30,10 +30,18 @@ ENV/
 ehthumbs.db
 Thumbs.db
 
-# Environment Variables
+# Environment Variables & Config Files
 .env
 .env.local
 .env.*.local
+
+# Configuration files (may contain secrets)
+config.toml
+config.yaml
+config.yml
+config.*.toml
+config.*.yaml
+config.*.yml
 
 # Testing
 .pytest_cache/

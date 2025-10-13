@@ -1,0 +1,86 @@
+# Pulsar Proxy Configuration File (TOML format)
+# Copy this file to config.toml and customize for your deployment
+#
+# Configuration precedence (highest to lowest):
+# 1. Environment variables (PULSAR_*, etc.)
+# 2. This config file
+# 3. Default values
+#
+# Note: http_port and workers are controlled by uvicorn at startup:
+#   uvicorn app.main:app --host 0.0.0.0 --port 8080 --workers 4
+
+# ============================================================================
+# Server Configuration
+# ============================================================================
+app_name = "Pulsar Proxy"
+
+# ============================================================================
+# Storage Backend
+# ============================================================================
+# Options: "memory" or "valkey"
+storage_backend = "memory"
+
+# ============================================================================
+# Valkey Configuration (when storage_backend = "valkey")
+# ============================================================================
+valkey_host = "localhost"
+valkey_port = 6379
+valkey_password = ""  # Leave empty if no authentication
+valkey_use_tls = false
+
+# ============================================================================
+# Storage Configuration
+# ============================================================================
+# Hot tier retention in seconds (in-memory cache)
+hot_tier_retention = 600  # 10 minutes
+
+# Persistent tier retention in seconds (Valkey)
+persistent_tier_retention = 86400  # 24 hours
+
+# Maximum messages to store per topic
+max_messages_per_topic = 1000000
+
+# ============================================================================
+# Limits
+# ============================================================================
+# Maximum WebSocket connections per instance
+max_connections_per_instance = 10000
+
+# Maximum message size in bytes
+max_message_size = 1048576  # 1MB
+
+# Rate limit per client (messages per minute)
+rate_limit_per_client = 1000
+
+# ============================================================================
+# Logging
+# ============================================================================
+# Options: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
+log_level = "INFO"
+
+# ============================================================================
+# Authentication
+# ============================================================================
+# IMPORTANT: Change this in production!
+# Generate a secure key: python -c "import secrets; print(secrets.token_urlsafe(32))"
+jwt_secret_key = "your-secret-key-here-change-in-production"
+
+# JWT signing algorithm
+jwt_algorithm = "HS256"
+
+# JWT token expiration time in minutes
+jwt_expiration_minutes = 60
+
+# ============================================================================
+# Example Production Configuration
+# ============================================================================
+# Uncomment and modify for production use:
+
+# [production]
+# app_name = "Pulsar Proxy Production"
+# storage_backend = "valkey"
+# valkey_host = "valkey.example.com"
+# valkey_port = 6379
+# valkey_use_tls = true
+# log_level = "WARNING"
+# jwt_secret_key = "REPLACE_WITH_SECURE_RANDOM_KEY"

@@ -18,6 +18,10 @@ pydantic-settings==2.6.1
 prometheus-fastapi-instrumentator==7.0.0
 prometheus-client==0.21.0
 
+# Configuration
+tomli==2.3.0
+pyyaml==6.0.2
+
 # Logging
 structlog==24.4.0
 
@@ -33,3 +37,4 @@ tox==4.30.3
 black==24.10.0
 ruff==0.8.2
 mypy==1.13.0
+types-PyYAML==6.0.12.20250915
