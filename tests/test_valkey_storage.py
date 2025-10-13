@@ -5,6 +5,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from glide import ExclusiveIdBound, MaxId, MinId
 
 from app.storage.valkey import ValkeyStorage
 
@@ -120,7 +121,6 @@ class TestValkeyStorage:
         call_args = valkey_storage._client.xrange.call_args
         assert call_args[0][0] == "stream:topic:test-topic"
         # Check that start bound is ExclusiveIdBound type
-        from glide.async_commands.stream import ExclusiveIdBound, MaxId
 
         assert isinstance(call_args[1]["start"], ExclusiveIdBound)
         assert isinstance(call_args[1]["end"], MaxId)
@@ -138,7 +138,6 @@ class TestValkeyStorage:
         call_args = valkey_storage._client.xrange.call_args
         assert call_args[0][0] == "stream:topic:test-topic"
         # Check that start bound is MinId and end is MaxId
-        from glide.async_commands.stream import MaxId, MinId
 
         assert isinstance(call_args[1]["start"], MinId)
         assert isinstance(call_args[1]["end"], MaxId)

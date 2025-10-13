@@ -5,8 +5,7 @@ import logging
 from datetime import datetime
 from typing import Any, Optional, Union
 
-from glide import GlideClient, GlideClientConfiguration, NodeAddress
-from glide.async_commands.stream import ExclusiveIdBound, MaxId, MinId, TrimByMaxLen
+from glide import ExclusiveIdBound, GlideClient, GlideClientConfiguration, MaxId, MinId, NodeAddress, TrimByMaxLen
 
 from app.storage.base import StorageBackend
 
