@@ -1,9 +1,10 @@
 """Authentication endpoints."""
 
 import logging
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
 
 from app.auth.dependencies import (
     get_current_user,
@@ -16,7 +17,6 @@ from app.auth.jwt import (
     verify_password,
 )
 from app.auth.models import (
-    LoginRequest,
     TokenResponse,
     User,
     UserCreate,
@@ -29,11 +29,16 @@ router = APIRouter()
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(login_request: LoginRequest) -> TokenResponse:
-    """Authenticate user and return JWT token.
+async def login(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+) -> TokenResponse:
+    """Authenticate user and return JWT token (OAuth2 compatible).
+
+    This endpoint uses OAuth2 password flow for compatibility with FastAPI's
+    built-in OpenAPI authentication UI.
 
     Args:
-        login_request: Login credentials
+        form_data: OAuth2 password request form (username and password)
 
     Returns:
         JWT token and user information
@@ -44,25 +49,27 @@ async def login(login_request: LoginRequest) -> TokenResponse:
     storage = get_user_storage()
 
     # Get user by username
-    user = await storage.get_user_by_username(login_request.username)
+    user = await storage.get_user_by_username(form_data.username)
     if not user:
-        logger.warning(f"Login attempt for non-existent user: {login_request.username}")
+        logger.warning(f"Login attempt for non-existent user: {form_data.username}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     # Verify password
-    if not verify_password(login_request.password, user.hashed_password):
-        logger.warning(f"Invalid password for user: {login_request.username}")
+    if not verify_password(form_data.password, user.hashed_password):
+        logger.warning(f"Invalid password for user: {form_data.username}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     # Check if user is active
     if not user.is_active:
-        logger.warning(f"Login attempt for inactive user: {login_request.username}")
+        logger.warning(f"Login attempt for inactive user: {form_data.username}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is inactive",
@@ -77,14 +84,6 @@ async def login(login_request: LoginRequest) -> TokenResponse:
         access_token=access_token,
         token_type="bearer",
         expires_in=get_token_expiration_seconds(),
-        user=UserPublic(
-            user_id=user.user_id,
-            username=user.username,
-            email=user.email,
-            is_active=user.is_active,
-            created_at=user.created_at,
-            permissions=user.permissions,
-        ),
     )
 
 

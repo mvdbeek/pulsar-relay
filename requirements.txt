@@ -1,6 +1,7 @@
 # Core Framework
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
+python-multipart==0.0.20  # Required for OAuth2 form data
 # uvloop==0.20.0  # Requires Python <=3.12, optional for performance
 
 # Valkey Client

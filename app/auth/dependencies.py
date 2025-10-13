@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import OAuth2PasswordBearer
 
 from app.auth.jwt import decode_token
 from app.auth.models import TokenPayload, User
@@ -12,8 +12,14 @@ from app.auth.storage import UserStorage
 
 logger = logging.getLogger(__name__)
 
-# HTTP Bearer token scheme
-security = HTTPBearer()
+# OAuth2 password bearer scheme for OpenAPI
+# tokenUrl points to the login endpoint
+oauth2_scheme = OAuth2PasswordBearer(
+    tokenUrl="/auth/login",
+    scheme_name="OAuth2PasswordBearer",
+    description="JWT Bearer token authentication",
+    auto_error=True,
+)
 
 # Global user storage instance (set during startup)
 _user_storage: Optional[UserStorage] = None
@@ -45,12 +51,12 @@ def get_user_storage() -> UserStorage:
 
 
 async def get_token_payload(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    token: str = Depends(oauth2_scheme),
 ) -> TokenPayload:
     """Extract and validate JWT token from request.
 
     Args:
-        credentials: HTTP authorization credentials
+        token: JWT token from Authorization header
 
     Returns:
         Token payload
@@ -58,8 +64,6 @@ async def get_token_payload(
     Raises:
         HTTPException: If token is invalid or expired
     """
-    token = credentials.credentials
-
     payload = decode_token(token)
     if payload is None:
         raise HTTPException(

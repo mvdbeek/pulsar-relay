@@ -46,12 +46,15 @@ class LoginRequest(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    """JWT token response."""
+    """JWT token response (OAuth2 compliant).
+
+    Following OAuth2 spec, only includes standard fields.
+    To get user info, clients should call /auth/me with the token.
+    """
 
     access_token: str = Field(..., description="JWT access token")
     token_type: str = Field(default="bearer", description="Token type")
     expires_in: int = Field(..., description="Token expiration time in seconds")
-    user: UserPublic = Field(..., description="User information")
 
 
 class TokenPayload(BaseModel):

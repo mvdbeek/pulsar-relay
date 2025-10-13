@@ -226,26 +226,26 @@ class TestAuthenticationEndpoints:
     """Test authentication HTTP endpoints."""
 
     def test_login_success(self, test_client):
-        """Test successful login."""
+        """Test successful login with OAuth2 form data."""
         response = test_client.post(
             "/auth/login",
-            json={"username": "admin", "password": "admin1234"},
+            data={"username": "admin", "password": "admin1234"},
         )
 
         assert response.status_code == 200
         data = response.json()
 
+        # OAuth2 compliant response
         assert "access_token" in data
         assert data["token_type"] == "bearer"
         assert "expires_in" in data
-        assert data["user"]["username"] == "admin"
-        assert "admin" in data["user"]["permissions"]
+        # User info is not included (OAuth2 spec) - use /auth/me to get it
 
     def test_login_invalid_password(self, test_client):
         """Test login with invalid password."""
         response = test_client.post(
             "/auth/login",
-            json={"username": "admin", "password": "wrongpass"},
+            data={"username": "admin", "password": "wrongpass"},
         )
 
         assert response.status_code == 401
@@ -255,7 +255,7 @@ class TestAuthenticationEndpoints:
         """Test login with non-existent user."""
         response = test_client.post(
             "/auth/login",
-            json={"username": "nonexistent", "password": "password"},
+            data={"username": "nonexistent", "password": "password"},
         )
 
         assert response.status_code == 401
@@ -265,7 +265,7 @@ class TestAuthenticationEndpoints:
         # First login
         login_response = test_client.post(
             "/auth/login",
-            json={"username": "user", "password": "user1234"},
+            data={"username": "user", "password": "user1234"},
         )
         token = login_response.json()["access_token"]
 
@@ -285,7 +285,7 @@ class TestAuthenticationEndpoints:
         """Test accessing protected endpoint without token."""
         response = test_client.get("/auth/me")
 
-        assert response.status_code == 403  # No auth header
+        assert response.status_code == 401  # OAuth2 returns 401 for missing auth
 
     def test_get_current_user_invalid_token(self, test_client):
         """Test accessing protected endpoint with invalid token."""
@@ -301,7 +301,7 @@ class TestAuthenticationEndpoints:
         # Login as admin
         login_response = test_client.post(
             "/auth/login",
-            json={"username": "admin", "password": "admin1234"},
+            data={"username": "admin", "password": "admin1234"},
         )
         token = login_response.json()["access_token"]
 
@@ -327,7 +327,7 @@ class TestAuthenticationEndpoints:
         # Login as regular user
         login_response = test_client.post(
             "/auth/login",
-            json={"username": "user", "password": "user1234"},
+            data={"username": "user", "password": "user1234"},
         )
         token = login_response.json()["access_token"]
 
@@ -349,7 +349,7 @@ class TestAuthenticationEndpoints:
         # Login as admin
         login_response = test_client.post(
             "/auth/login",
-            json={"username": "admin", "password": "admin1234"},
+            data={"username": "admin", "password": "admin1234"},
         )
         token = login_response.json()["access_token"]
 
@@ -378,15 +378,15 @@ class TestProtectedEndpoints:
             },
         )
 
-        # Should fail without authentication
-        assert response.status_code == 403
+        # Should fail without authentication (OAuth2 returns 401)
+        assert response.status_code == 401
 
     def test_create_message_with_auth(self, test_client):
         """Test creating message with valid authentication."""
         # Login
         login_response = test_client.post(
             "/auth/login",
-            json={"username": "user", "password": "user1234"},
+            data={"username": "user", "password": "user1234"},
         )
         token = login_response.json()["access_token"]
 
@@ -409,7 +409,7 @@ class TestProtectedEndpoints:
         # Login as readonly user
         login_response = test_client.post(
             "/auth/login",
-            json={"username": "readonly", "password": "readonly123"},
+            data={"username": "readonly", "password": "readonly123"},
         )
         token = login_response.json()["access_token"]
 
@@ -431,7 +431,7 @@ class TestProtectedEndpoints:
         # Login as readonly user (has read permission)
         login_response = test_client.post(
             "/auth/login",
-            json={"username": "readonly", "password": "readonly123"},
+            data={"username": "readonly", "password": "readonly123"},
         )
         token = login_response.json()["access_token"]
 
