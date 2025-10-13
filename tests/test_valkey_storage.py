@@ -31,7 +31,7 @@ class TestValkeyStorage:
     async def test_save_message(self, valkey_storage):
         """Test saving a message to Valkey stream."""
         # Mock xadd to return a stream ID
-        valkey_storage._client.xadd = AsyncMock(return_value="1234567890123-0")
+        valkey_storage._client.xadd = AsyncMock(return_value=b"1234567890123-0")
         valkey_storage._client.xtrim = AsyncMock()
 
         await valkey_storage.save_message(
@@ -59,7 +59,7 @@ class TestValkeyStorage:
     @pytest.mark.asyncio
     async def test_save_message_without_metadata(self, valkey_storage):
         """Test saving a message without metadata."""
-        valkey_storage._client.xadd = AsyncMock(return_value="1234567890123-0")
+        valkey_storage._client.xadd = AsyncMock(return_value=b"1234567890123-0")
         valkey_storage._client.xtrim = AsyncMock()
 
         await valkey_storage.save_message(
