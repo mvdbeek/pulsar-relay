@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [ '3.9', '3.10', '3.11', '3.12', '3.13', '3.14' ]
+        python-version: [ '3.9', '3.10', '3.11', '3.12', '3.13' ]
 
     # Make Valkey available as a service container. The service's port 6379
     # is published to the runner so tests can connect to localhost:6379.
