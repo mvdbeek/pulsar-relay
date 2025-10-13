@@ -138,9 +138,9 @@ class ValkeyStorage(StorageBackend):
                 TrimByMaxLen(exact=True, threshold=self.max_messages_per_topic),
             )
 
-            logger.debug(
-                f"Saved message {message_id} to topic {topic} with stream ID {stream_entry_id.decode() if stream_entry_id else None}"
-            )
+            msg_1 = f"Saved message {message_id} to topic {topic}"
+            msg_2 = f"{msg_1} with stream ID {stream_entry_id.decode() if stream_entry_id else None}"
+            logger.debug(msg_2)
 
         except Exception as e:
             logger.error(f"Failed to save message to Valkey: {e}")
@@ -180,8 +180,8 @@ class ValkeyStorage(StorageBackend):
                     # Each pair is [field_name_bytes, field_value_bytes]
                     fields = {}
                     for pair in field_value_list:
-                        field_name = pair[0].decode('utf-8')
-                        field_value = pair[1].decode('utf-8')
+                        field_name = pair[0].decode("utf-8")
+                        field_value = pair[1].decode("utf-8")
                         fields[field_name] = field_value
 
                     # Parse the fields back into a message dict
@@ -190,7 +190,7 @@ class ValkeyStorage(StorageBackend):
                         "topic": topic,
                         "payload": json.loads(fields.get("payload", "{}")),
                         "timestamp": fields.get("timestamp", ""),
-                        "stream_id": entry_id_bytes.decode('utf-8'),  # Include stream ID for pagination
+                        "stream_id": entry_id_bytes.decode("utf-8"),  # Include stream ID for pagination
                     }
 
                     if "metadata" in fields:

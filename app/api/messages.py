@@ -109,7 +109,7 @@ async def create_message(
             timestamp=timestamp,
             metadata=message.metadata,
         )
-        await manager.broadcast(message.topic, ws_message.model_dump(mode='json'))
+        await manager.broadcast(message.topic, ws_message.model_dump(mode="json"))
 
     # Broadcast to long polling clients
     if _poll_manager:
@@ -169,7 +169,7 @@ async def create_bulk_messages(
                     timestamp=timestamp,
                     metadata=message.metadata,
                 )
-                await manager.broadcast(message.topic, ws_message.model_dump(mode='json'))
+                await manager.broadcast(message.topic, ws_message.model_dump(mode="json"))
 
             # Broadcast to long polling clients
             if _poll_manager:

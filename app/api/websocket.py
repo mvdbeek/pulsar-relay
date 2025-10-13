@@ -114,7 +114,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(..., descr
                 session_id=session_id,
                 timestamp=datetime.now(timezone.utc),
             )
-            await websocket.send_json(response.model_dump(mode='json'))
+            await websocket.send_json(response.model_dump(mode="json"))
 
             logger.info(f"Client {session_id} subscribed to: {client_topics}")
 
@@ -124,7 +124,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(..., descr
                 code="SUBSCRIPTION_ERROR",
                 message=f"Failed to subscribe: {str(e)}",
             )
-            await websocket.send_json(error.model_dump(mode='json'))
+            await websocket.send_json(error.model_dump(mode="json"))
             await websocket.close()
             return
 
@@ -137,7 +137,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(..., descr
                 if data.get("type") == "ping":
                     # Respond to ping
                     pong = WebSocketPong(type="pong", timestamp=datetime.now(timezone.utc))
-                    await websocket.send_json(pong.model_dump(mode='json'))
+                    await websocket.send_json(pong.model_dump(mode="json"))
 
                 elif data.get("type") == "ack":
                     # Acknowledge message receipt
@@ -164,7 +164,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(..., descr
                         code="UNKNOWN_MESSAGE_TYPE",
                         message=f"Unknown message type: {data.get('type')}",
                     )
-                    await websocket.send_json(error.model_dump(mode='json'))
+                    await websocket.send_json(error.model_dump(mode="json"))
 
             except WebSocketDisconnect:
                 logger.info(f"Client {session_id} disconnected")
@@ -174,7 +174,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(..., descr
                 logger.error(f"Error processing WebSocket message: {e}")
                 error = WebSocketError(type="error", code="PROCESSING_ERROR", message=str(e))
                 try:
-                    await websocket.send_json(error.model_dump(mode='json'))
+                    await websocket.send_json(error.model_dump(mode="json"))
                 except Exception:
                     break
 
