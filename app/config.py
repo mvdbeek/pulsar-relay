@@ -37,8 +37,8 @@ def load_config_file(config_path: Optional[Path] = None) -> dict[str, Any]:
             Path("config.toml"),
             Path("config.yaml"),
             Path("config.yml"),
-            Path("/etc/pulsar-proxy/config.toml"),
-            Path("/etc/pulsar-proxy/config.yaml"),
+            Path("/etc/pulsar-relay/config.toml"),
+            Path("/etc/pulsar-relay/config.yaml"),
         ]
 
         for file_path in possible_files:
@@ -75,7 +75,7 @@ class Settings(BaseSettings):
 
     # Server Configuration
     app_name: str = Field(
-        default="Pulsar Proxy",
+        default="Pulsar Relay",
         description="Application name",
     )
 

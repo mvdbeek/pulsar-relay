@@ -1,4 +1,4 @@
-"""Benchmark suite for Pulsar Proxy performance testing."""
+"""Benchmark suite for Pulsar Relay performance testing."""
 
 import asyncio
 import json
@@ -812,7 +812,7 @@ class BenchmarkRunner:
     async def run_all_benchmarks(self):
         """Run all benchmarks in sequence."""
         print("\n" + "=" * 70)
-        print("🚀 PULSAR PROXY BENCHMARK SUITE")
+        print("🚀 PULSAR RELAY BENCHMARK SUITE")
         print("=" * 70)
         print(f"Base URL: {self.base_url}")
         print(f"WebSocket URL: {self.ws_url}")

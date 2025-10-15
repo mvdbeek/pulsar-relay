@@ -1,6 +1,6 @@
 # Python Implementation Quick Start
 
-Get started with the Python/FastAPI implementation of Pulsar Proxy.
+Get started with the Python/FastAPI implementation of Pulsar Relay.
 
 ## Prerequisites
 
@@ -12,8 +12,8 @@ Get started with the Python/FastAPI implementation of Pulsar Proxy.
 
 ```bash
 # Create project directory
-mkdir pulsar-proxy
-cd pulsar-proxy
+mkdir pulsar-relay
+cd pulsar-relay
 
 # Create virtual environment
 python -m venv venv
@@ -37,7 +37,7 @@ import uuid
 import asyncio
 from weakref import WeakSet
 
-app = FastAPI(title="Pulsar Proxy")
+app = FastAPI(title="Pulsar Relay")
 
 # Message model
 class Message(BaseModel):
@@ -315,13 +315,13 @@ from prometheus_client import Counter, Histogram
 
 # Custom metrics
 messages_sent = Counter(
-    'proxy_messages_sent_total',
+    'relay_messages_sent_total',
     'Total messages sent',
     ['topic']
 )
 
 message_latency = Histogram(
-    'proxy_message_latency_seconds',
+    'relay_message_latency_seconds',
     'Message delivery latency',
     ['topic']
 )
@@ -350,7 +350,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # Server
-    app_name: str = "Pulsar Proxy"
+    app_name: str = "Pulsar Relay"
     http_port: int = 8080
     workers: int = 4
 
@@ -425,7 +425,7 @@ CMD ["gunicorn", "app.main:app", \
 ## 8. Complete Project Structure
 
 ```
-pulsar-proxy/
+pulsar-relay/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py          # FastAPI app

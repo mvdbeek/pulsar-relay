@@ -2,13 +2,13 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
-    cluster: 'pulsar-proxy'
+    cluster: 'pulsar-relay'
 
 scrape_configs:
-  # Pulsar Proxy metrics
-  - job_name: 'pulsar-proxy'
+  # Pulsar Relay metrics
+  - job_name: 'pulsar-relay'
     static_configs:
-      - targets: ['proxy:9090']
+      - targets: ['relay:9090']
     metrics_path: '/metrics'
 
   # Valkey metrics (if redis_exporter is added)

@@ -115,7 +115,7 @@ log_level = "ERROR"
         """Test Settings with default values when no config file."""
         settings = Settings.from_config_file(None)
 
-        assert settings.app_name == "Pulsar Proxy"
+        assert settings.app_name == "Pulsar Relay"
         assert settings.storage_backend == "memory"
 
     def test_settings_validation(self):

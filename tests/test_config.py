@@ -10,7 +10,7 @@ class TestSettings:
         """Test that default settings are loaded correctly."""
         settings = Settings()
 
-        assert settings.app_name == "Pulsar Proxy"
+        assert settings.app_name == "Pulsar Relay"
         assert settings.valkey_host == "localhost"
         assert settings.valkey_port == 6379
         assert settings.hot_tier_retention == 600

@@ -4,11 +4,11 @@ import os
 
 import websockets
 
-PROXY_FQDN = os.getenv("PROXY_FQDN", "localhost:8088")
+RELAY_FQDN = os.getenv("RELAY_FQDN", "localhost:8088")
 
 
 async def consume_messages():
-    uri = f"ws://{PROXY_FQDN}/ws"
+    uri = f"ws://{RELAY_FQDN}/ws"
 
     async with websockets.connect(uri) as websocket:
         # Subscribe

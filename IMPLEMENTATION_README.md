@@ -1,6 +1,6 @@
-# Pulsar Proxy - Python Implementation
+# Pulsar Relay - Python Implementation
 
-High-performance message proxy built with FastAPI, supporting WebSocket and long-polling message delivery.
+High-performance message relay built with FastAPI, supporting WebSocket and long-polling message delivery.
 
 ## Implementation Status
 
@@ -177,13 +177,13 @@ asyncio.run(consume_messages())
 curl http://localhost:8080/metrics
 
 # Filter specific metrics
-curl http://localhost:8080/metrics | grep proxy_
+curl http://localhost:8080/metrics | grep relay_
 ```
 
 ## Project Structure
 
 ```
-pulsar-proxy/
+pulsar-relay/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py              # FastAPI app entry point
@@ -233,7 +233,7 @@ Create a `.env` file (or use environment variables):
 cp .env.example .env
 
 # Edit values
-APP_NAME="Pulsar Proxy"
+APP_NAME="Pulsar Relay"
 HTTP_PORT=8080
 LOG_LEVEL=INFO
 
@@ -330,10 +330,10 @@ Manages WebSocket connections with topic-based subscriptions:
 
 Integrated Prometheus metrics:
 
-- `proxy_messages_received_total` - Messages received by topic
-- `proxy_messages_delivered_total` - Messages delivered
-- `proxy_websocket_connections_active` - Active WebSocket connections
-- `proxy_message_latency_seconds` - Message processing latency
+- `relay_messages_received_total` - Messages received by topic
+- `relay_messages_delivered_total` - Messages delivered
+- `relay_websocket_connections_active` - Active WebSocket connections
+- `relay_message_latency_seconds` - Message processing latency
 - Standard HTTP metrics from instrumentator
 
 ## Performance

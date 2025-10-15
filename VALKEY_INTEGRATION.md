@@ -1,6 +1,6 @@
 # Valkey Storage Backend Integration
 
-This document describes the Valkey storage backend implementation for the Pulsar Proxy.
+This document describes the Valkey storage backend implementation for the Pulsar Relay.
 
 ## Overview
 
@@ -217,7 +217,7 @@ export VALKEY_HOST=localhost
 export VALKEY_PORT=6379
 ```
 
-3. **Start the proxy:**
+3. **Start the relay:**
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8080
 ```
@@ -237,7 +237,7 @@ services:
       - valkey-data:/data
     command: valkey-server /etc/valkey/valkey.conf
 
-  proxy:
+  relay:
     build: .
     ports:
       - "8080:8080"
@@ -347,7 +347,7 @@ docker stop test-valkey && docker rm test-valkey
    STORAGE_BACKEND=valkey
    ```
 3. **Start Valkey server**
-4. **Restart proxy**
+4. **Restart relay**
 5. **Verify health**: `curl http://localhost:8080/health`
 
 ### From Valkey to Memory
@@ -356,7 +356,7 @@ docker stop test-valkey && docker rm test-valkey
    ```bash
    STORAGE_BACKEND=memory
    ```
-2. **Restart proxy**
+2. **Restart relay**
 3. **Note**: Existing messages in Valkey will be inaccessible but not deleted
 
 ## Future Enhancements
@@ -381,5 +381,5 @@ Planned features for the Valkey backend:
 ## Support
 
 For issues or questions:
-- GitHub Issues: [pulsar-proxy/issues](https://github.com/your-org/pulsar-proxy/issues)
+- GitHub Issues: [pulsar-relay/issues](https://github.com/your-org/pulsar-relay/issues)
 - Documentation: `README.md`, `ARCHITECTURE.md`

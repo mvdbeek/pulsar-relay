@@ -1,6 +1,6 @@
-# Python Technology Stack for Pulsar Proxy
+# Python Technology Stack for Pulsar Relay
 
-Comprehensive technology stack recommendations for implementing the message proxy in Python with FastAPI.
+Comprehensive technology stack recommendations for implementing the message relay in Python with FastAPI.
 
 ## Core Framework
 
@@ -285,19 +285,19 @@ from prometheus_client import Counter, Histogram, Gauge
 
 # Custom metrics
 messages_received = Counter(
-    'proxy_messages_received_total',
+    'relay_messages_received_total',
     'Total messages received',
     ['topic']
 )
 
 message_latency = Histogram(
-    'proxy_message_latency_seconds',
+    'relay_message_latency_seconds',
     'Message delivery latency',
     ['topic', 'delivery_type']
 )
 
 active_connections = Gauge(
-    'proxy_connections_active',
+    'relay_connections_active',
     'Active WebSocket connections',
     ['type']
 )
@@ -496,7 +496,7 @@ mypy==1.11.0
 ## Recommended Project Structure
 
 ```
-pulsar-proxy/
+pulsar-relay/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py              # FastAPI app entry point
@@ -555,7 +555,7 @@ from glide import AsyncClient, ClusterClientConfiguration
 config = ClusterClientConfiguration(
     addresses=[NodeAddress("localhost", 6379)],
     request_timeout=5000,
-    client_name="pulsar-proxy"
+    client_name="pulsar-relay"
 )
 client = await AsyncClient.create_client(config)
 ```

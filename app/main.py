@@ -94,7 +94,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
-    description="High-performance message proxy with WebSocket and long-polling support",
+    description="High-performance message relay with WebSocket and long-polling support",
     lifespan=lifespan,
 )
 

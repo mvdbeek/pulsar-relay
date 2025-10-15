@@ -1,4 +1,4 @@
-# Pulsar Proxy Benchmark Results
+# Pulsar Relay Benchmark Results
 
 **Date:** 2025-10-13
 **Duration:** ~6 seconds
@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-The Pulsar Proxy demonstrates excellent performance for message ingestion and delivery scenarios:
+The Pulsar Relay demonstrates excellent performance for message ingestion and delivery scenarios:
 
 - **Peak Throughput:** 32,955 ops/sec (bulk ingestion - 47% improvement!)
 - **Single Message Ingestion:** 1,338 msgs/sec with sub-millisecond latency
@@ -85,7 +85,7 @@ The Pulsar Proxy demonstrates excellent performance for message ingestion and de
 - **P95 Latency:** 3.13ms
 - **P99 Latency:** 3.67ms
 
-**Analysis:** Excellent end-to-end delivery performance with sub-2.2ms median latency. This demonstrates the proxy can deliver messages in near real-time with minimal overhead. P99 under 4ms is outstanding.
+**Analysis:** Excellent end-to-end delivery performance with sub-2.2ms median latency. This demonstrates the relay can deliver messages in near real-time with minimal overhead. P99 under 4ms is outstanding.
 
 ### 6. Broadcast Performance
 

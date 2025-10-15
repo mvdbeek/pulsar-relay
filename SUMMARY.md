@@ -1,8 +1,8 @@
-# Pulsar Proxy - Documentation Summary
+# Pulsar Relay - Documentation Summary
 
 ## What Is This?
 
-A high-performance message proxy system for real-time message delivery via **WebSocket** and **HTTP long-polling**. Messages are stored in **Valkey Streams** with configurable persistence (AOF/RDB) for durability.
+A high-performance message relay system for real-time message delivery via **WebSocket** and **HTTP long-polling**. Messages are stored in **Valkey Streams** with configurable persistence (AOF/RDB) for durability.
 
 ## Architecture Highlights
 
@@ -10,7 +10,7 @@ A high-performance message proxy system for real-time message delivery via **Web
 - **Dual delivery modes**: WebSocket for real-time push, long-polling for HTTP compatibility
 - **No external database**: Valkey provides both queuing and persistence
 - **Data durability**: <1 second data loss on crash with `appendfsync everysec`
-- **Simple & scalable**: Stateless proxy design with shared state in Valkey
+- **Simple & scalable**: Stateless relay design with shared state in Valkey
 
 ## Technology Stack (Python/FastAPI)
 
@@ -66,7 +66,7 @@ A high-performance message proxy system for real-time message delivery via **Web
 
 6. **[docker-compose.yml](./docker-compose.yml)** - Ready-to-run stack
    - Valkey with persistence
-   - Proxy application
+   - Relay application
    - Prometheus metrics
    - Grafana dashboards
 
@@ -94,7 +94,7 @@ uvicorn app.main:app --reload
 ### Start Full Stack (Docker)
 
 ```bash
-# Start Valkey + Proxy + Monitoring
+# Start Valkey + Relay + Monitoring
 docker-compose up -d
 
 # Send test message
@@ -118,7 +118,7 @@ curl http://localhost:8080/metrics
 ## File Structure
 
 ```
-pulsar-proxy/
+pulsar-relay/
 ├── SUMMARY.md                    # This file
 ├── README.md                     # Project overview
 │
@@ -343,4 +343,4 @@ docker-compose exec valkey valkey-cli MONITOR
 
 ---
 
-**TL;DR**: This is a FastAPI-based message proxy with Valkey persistence. Start with [PYTHON_QUICKSTART.md](./PYTHON_QUICKSTART.md) for a minimal working example, then explore other docs as needed.
+**TL;DR**: This is a FastAPI-based message relay with Valkey persistence. Start with [PYTHON_QUICKSTART.md](./PYTHON_QUICKSTART.md) for a minimal working example, then explore other docs as needed.

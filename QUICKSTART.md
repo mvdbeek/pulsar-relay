@@ -1,6 +1,6 @@
 # Quick Start Guide
 
-Get the Pulsar Proxy up and running in minutes with persistent message storage.
+Get the Pulsar Relay up and running in minutes with persistent message storage.
 
 ## Architecture Overview
 
@@ -11,7 +11,7 @@ Get the Pulsar Proxy up and running in minutes with persistent message storage.
        │
        ▼
 ┌─────────────────────────────────────┐
-│         Pulsar Proxy                │
+│         Pulsar Relay                │
 │                                     │
 │  ┌──────────┐   ┌──────────────┐   │
 │  │In-Memory │──▶│    Valkey    │   │
@@ -34,9 +34,9 @@ Get the Pulsar Proxy up and running in minutes with persistent message storage.
 
 ```bash
 # Clone or navigate to the project
-cd pulsar-proxy
+cd pulsar-relay
 
-# Start Valkey and Proxy
+# Start Valkey and Relay
 docker-compose up -d
 
 # Check status
@@ -107,17 +107,17 @@ docker exec pulsar-valkey valkey-cli INFO persistence | grep aof_enabled
 # Should show: aof_enabled:1
 ```
 
-### 2. Build and Run the Proxy
+### 2. Build and Run the Relay
 
 ```bash
-# Build the proxy (requires Go 1.21+)
-go build -o pulsar-proxy ./cmd/proxy
+# Build the relay (requires Go 1.21+)
+go build -o pulsar-relay ./cmd/relay
 
 # Run with environment variables
 VALKEY_HOST=localhost \
 VALKEY_PORT=6379 \
 VALKEY_PASSWORD=changeme \
-./pulsar-proxy
+./pulsar-relay
 ```
 
 ## Understanding Valkey Persistence
@@ -213,10 +213,10 @@ docker-compose exec valkey valkey-cli SLOWLOG GET 10
 Access metrics at http://localhost:9090/metrics
 
 Key metrics:
-- `proxy_messages_received_total` - Total messages received
-- `proxy_messages_delivered_total` - Total messages delivered
-- `proxy_valkey_operations_total` - Valkey operation count
-- `proxy_valkey_errors_total` - Valkey errors
+- `relay_messages_received_total` - Total messages received
+- `relay_messages_delivered_total` - Total messages delivered
+- `relay_valkey_operations_total` - Valkey operation count
+- `relay_valkey_errors_total` - Valkey errors
 
 ### Grafana Dashboards
 
@@ -232,7 +232,7 @@ Pre-configured dashboards for:
 
 ### Automatic Stream Trimming
 
-The proxy automatically trims old messages from streams:
+The relay automatically trims old messages from streams:
 
 ```bash
 # Check stream length
@@ -242,7 +242,7 @@ docker-compose exec valkey valkey-cli XLEN topic:notifications:stream
 docker-compose exec valkey valkey-cli XTRIM topic:notifications:stream MAXLEN ~ 10000
 
 # Trim messages older than 24 hours (requires timestamp-based IDs)
-# This is handled automatically by the proxy based on configuration
+# This is handled automatically by the relay based on configuration
 ```
 
 ### Configuration

@@ -1,6 +1,6 @@
-# Pulsar Proxy API Reference
+# Pulsar Relay API Reference
 
-Complete API reference for the Pulsar Proxy message delivery system.
+Complete API reference for the Pulsar Relay message delivery system.
 
 ## Base URL
 
@@ -557,18 +557,18 @@ Prometheus metrics endpoint.
 **Response:** `200 OK` (Prometheus text format)
 
 ```
-# HELP proxy_connections_total Active connections by type
-# TYPE proxy_connections_total gauge
-proxy_connections_total{type="websocket"} 1234
-proxy_connections_total{type="longpoll"} 567
+# HELP relay_connections_total Active connections by type
+# TYPE relay_connections_total gauge
+relay_connections_total{type="websocket"} 1234
+relay_connections_total{type="longpoll"} 567
 
-# HELP proxy_messages_received_total Total messages received
-# TYPE proxy_messages_received_total counter
-proxy_messages_received_total{topic="notifications"} 45678
+# HELP relay_messages_received_total Total messages received
+# TYPE relay_messages_received_total counter
+relay_messages_received_total{topic="notifications"} 45678
 
-# HELP proxy_messages_delivered_total Total messages delivered
-# TYPE proxy_messages_delivered_total counter
-proxy_messages_delivered_total{topic="notifications",type="websocket"} 45123
+# HELP relay_messages_delivered_total Total messages delivered
+# TYPE relay_messages_delivered_total counter
+relay_messages_delivered_total{topic="notifications",type="websocket"} 45123
 ```
 
 ---

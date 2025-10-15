@@ -1,8 +1,8 @@
-# Pulsar Proxy - System Architecture
+# Pulsar Relay - System Architecture
 
 ## Overview
 
-A high-performance message proxy system that accepts messages from producers and delivers them to clients via WebSocket or long-polling connections. Designed for scalability, reliability, and low-latency message delivery.
+A high-performance message relay system that accepts messages from producers and delivers them to clients via WebSocket or long-polling connections. Designed for scalability, reliability, and low-latency message delivery.
 
 ## System Architecture
 
@@ -242,7 +242,7 @@ type Topic struct {
 
 ```javascript
 // Client connects
-const ws = new WebSocket('ws://proxy.example.com/ws?token=<auth_token>');
+const ws = new WebSocket('ws://relay.example.com/ws?token=<auth_token>');
 
 // Subscribe to topics
 ws.send(JSON.stringify({
@@ -382,12 +382,12 @@ Content-Type: application/json
 ### Metrics (Prometheus)
 
 **Key Metrics:**
-- `proxy_connections_total{type="websocket|longpoll"}` - Active connections
-- `proxy_messages_received_total{topic}` - Inbound message rate
-- `proxy_messages_delivered_total{topic,type}` - Outbound message rate
-- `proxy_message_latency_seconds{quantile}` - Message delivery latency
-- `proxy_queue_depth{topic}` - Pending messages per topic
-- `proxy_errors_total{type,code}` - Error rates by type
+- `relay_connections_total{type="websocket|longpoll"}` - Active connections
+- `relay_messages_received_total{topic}` - Inbound message rate
+- `relay_messages_delivered_total{topic,type}` - Outbound message rate
+- `relay_message_latency_seconds{quantile}` - Message delivery latency
+- `relay_queue_depth{topic}` - Pending messages per topic
+- `relay_errors_total{type,code}` - Error rates by type
 
 **Dashboards:**
 - Real-time connection count by type
@@ -443,7 +443,7 @@ Content-Type: application/json
 1. On restart, Valkey loads data from AOF or RDB
 2. AOF provides point-in-time recovery
 3. RDB provides fast bulk loading
-4. Proxy reconnects to Valkey automatically
+4. Relay reconnects to Valkey automatically
 
 **Data Retention:**
 ```bash

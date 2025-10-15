@@ -1,6 +1,6 @@
-# Pulsar Proxy
+# Pulsar Relay
 
-A high-performance message proxy system for real-time message delivery to clients via WebSocket and long-polling connections.
+A high-performance message relay system for real-time message delivery to clients via WebSocket and long-polling connections.
 
 ## Features
 
@@ -24,8 +24,8 @@ A high-performance message proxy system for real-time message delivery to client
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/pulsar-proxy.git
-cd pulsar-proxy
+git clone https://github.com/yourusername/pulsar-relay.git
+cd pulsar-relay
 
 # Set up configuration
 cp config.example.yaml config.yaml
@@ -202,11 +202,11 @@ See [API.md](./API.md) for complete API documentation.
 
 Available at `http://localhost:8080/metrics`:
 
-- `proxy_connections_total` - Active connections by type
-- `proxy_messages_received_total` - Inbound message rate
-- `proxy_messages_delivered_total` - Outbound message rate
-- `proxy_message_latency_seconds` - Message delivery latency
-- `proxy_queue_depth` - Pending messages per topic
+- `relay_connections_total` - Active connections by type
+- `relay_messages_received_total` - Inbound message rate
+- `relay_messages_delivered_total` - Outbound message rate
+- `relay_message_latency_seconds` - Message delivery latency
+- `relay_queue_depth` - Pending messages per topic
 
 ### Valkey Monitoring
 
@@ -273,7 +273,7 @@ make mocks
 ```
 .
 ├── cmd/
-│   └── proxy/          # Main application entry point
+│   └── relay/          # Main application entry point
 ├── internal/
 │   ├── api/            # HTTP and WebSocket handlers
 │   ├── auth/           # Authentication and authorization
@@ -321,5 +321,5 @@ MIT License - see [LICENSE](./LICENSE) for details.
 ## Support
 
 - Documentation: [docs/](./docs/)
-- Issues: [GitHub Issues](https://github.com/mvdbeek/pulsar-proxy/issues)
-- Discussions: [GitHub Discussions](https://github.com/mvdbeek/pulsar-proxy/discussions)
+- Issues: [GitHub Issues](https://github.com/mvdbeek/pulsar-relay/issues)
+- Discussions: [GitHub Discussions](https://github.com/mvdbeek/pulsar-relay/discussions)

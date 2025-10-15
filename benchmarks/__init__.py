@@ -1,1 +1,1 @@
-"""Benchmark suite for Pulsar Proxy."""
+"""Benchmark suite for Pulsar Relay."""
