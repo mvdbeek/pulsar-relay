@@ -9,6 +9,25 @@ import pytest
 from app.config import Settings, load_config_file, load_settings
 
 
+@pytest.fixture(autouse=True)
+def isolated_config_dir(monkeypatch, tmp_path):
+    """Isolate tests from local config files by running in a temp directory.
+
+    This fixture automatically runs for all tests in this module and ensures
+    that tests don't pick up config.toml or config.yaml from the project root.
+    """
+    # Change to temporary directory
+    monkeypatch.chdir(tmp_path)
+
+    # Clear any PULSAR_CONFIG_FILE environment variable
+    monkeypatch.delenv("PULSAR_CONFIG_FILE", raising=False)
+
+    # Clear .env file setting
+    monkeypatch.delenv("PULSAR_ENV_FILE", raising=False)
+
+    return tmp_path
+
+
 class TestConfigFileLoading:
     """Test loading configuration from TOML and YAML files."""
 
