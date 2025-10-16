@@ -160,6 +160,20 @@ class Settings(BaseSettings):
         ge=1,
     )
 
+    # Bootstrap Admin (created automatically on first startup if doesn't exist)
+    bootstrap_admin_username: Optional[str] = Field(
+        default=None,
+        description="Bootstrap admin username (created on startup if set)",
+    )
+    bootstrap_admin_password: Optional[str] = Field(
+        default=None,
+        description="Bootstrap admin password (created on startup if set)",
+    )
+    bootstrap_admin_email: Optional[str] = Field(
+        default=None,
+        description="Bootstrap admin email (created on startup if set)",
+    )
+
     @field_validator("log_level", mode="before")
     @classmethod
     def validate_log_level(cls, v: str) -> str:

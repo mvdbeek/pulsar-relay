@@ -1,7 +1,7 @@
 """Authentication dependencies for FastAPI."""
 
 import logging
-from typing import Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -9,6 +9,9 @@ from fastapi.security import OAuth2PasswordBearer
 from app.auth.jwt import decode_token
 from app.auth.models import TokenPayload, User
 from app.auth.storage import UserStorage
+
+if TYPE_CHECKING:
+    from app.auth.topic_storage import TopicStorage
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +24,9 @@ oauth2_scheme = OAuth2PasswordBearer(
     auto_error=True,
 )
 
-# Global user storage instance (set during startup)
+# Global storage instances (set during startup)
 _user_storage: Optional[UserStorage] = None
+_topic_storage: Optional["TopicStorage"] = None  # Forward reference to avoid circular import
 
 
 def set_user_storage(storage: UserStorage) -> None:
@@ -48,6 +52,31 @@ def get_user_storage() -> UserStorage:
     if _user_storage is None:
         raise RuntimeError("User storage not initialized")
     return _user_storage
+
+
+def set_topic_storage(storage) -> None:
+    """Set the global topic storage instance.
+
+    Args:
+        storage: Topic storage backend
+    """
+    global _topic_storage
+    _topic_storage = storage
+    logger.info("Set topic storage for authorization")
+
+
+def get_topic_storage() -> "TopicStorage":
+    """Get the topic storage instance.
+
+    Returns:
+        Topic storage backend
+
+    Raises:
+        RuntimeError: If topic storage not initialized
+    """
+    if _topic_storage is None:
+        raise RuntimeError("Topic storage not initialized")
+    return _topic_storage
 
 
 async def get_token_payload(
@@ -188,3 +217,97 @@ def require_any_permission(*permissions: str):
         return current_user
 
     return permission_checker
+
+
+def require_topic_access(topic: str, permission_type: Literal["read", "write"]):
+    """Create a dependency that requires access to a specific topic.
+
+    Args:
+        topic: Topic name
+        permission_type: Type of access required ("read" or "write")
+
+    Returns:
+        Dependency function
+    """
+
+    async def topic_access_checker(
+        current_user: User = Depends(get_current_user),
+    ) -> User:
+        """Check if user has access to the topic.
+
+        Args:
+            current_user: Current user
+
+        Returns:
+            Current user
+
+        Raises:
+            HTTPException: If user lacks access to topic
+        """
+        topic_storage = get_topic_storage()
+
+        # Check if user can access the topic
+        can_access = await topic_storage.user_can_access(
+            topic_name=topic,
+            user_id=current_user.user_id,
+            permission_type=permission_type,
+            user_permissions=current_user.permissions,
+        )
+
+        if not can_access:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied to topic '{topic}' (requires {permission_type} permission)",
+            )
+
+        return current_user
+
+    return topic_access_checker
+
+
+async def get_or_create_topic(topic_name: str, current_user: User):
+    """Get or create a topic, setting the current user as owner.
+
+    Args:
+        topic_name: Topic name
+        current_user: Current user
+
+    Returns:
+        Topic instance
+
+    Raises:
+        HTTPException: If topic creation fails
+    """
+    from app.auth.models import TopicCreate
+
+    topic_storage = get_topic_storage()
+
+    # Try to get existing topic
+    topic = await topic_storage.get_topic(topic_name)
+
+    if topic:
+        return topic
+
+    # Topic doesn't exist - create it with current user as owner
+    try:
+        topic_data = TopicCreate(
+            topic_name=topic_name,
+            is_public=False,  # Default to private
+            description=f"Auto-created topic by {current_user.username}",
+        )
+        topic = await topic_storage.create_topic(current_user.user_id, topic_data)
+        logger.info(f"Auto-created topic '{topic_name}' for user {current_user.username}")
+
+        # Update user's owned_topics list
+        if topic_name not in current_user.owned_topics:
+            current_user.owned_topics.append(topic_name)
+            user_storage = get_user_storage()
+            await user_storage.update_user(current_user)
+
+        return topic
+    except Exception as e:
+        logger.error(f"Failed to create topic '{topic_name}': {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create topic: {str(e)}",
+        )

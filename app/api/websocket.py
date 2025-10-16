@@ -7,7 +7,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
-from app.auth.dependencies import get_user_storage
+from app.auth.dependencies import get_topic_storage, get_user_storage
 from app.auth.jwt import decode_token
 from app.core.connections import ConnectionManager
 from app.models import (
@@ -103,7 +103,32 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(..., descr
             data = await websocket.receive_json()
             subscribe_msg = WebSocketSubscribe(**data)
 
-            # Subscribe to topics
+            # Validate access to ALL requested topics upfront - fail early if any are denied
+            topic_storage = get_topic_storage()
+            denied_topics = []
+
+            for topic in subscribe_msg.topics:
+                can_access = await topic_storage.user_can_access(
+                    topic_name=topic,
+                    user_id=user.user_id,
+                    permission_type="read",
+                    user_permissions=user.permissions,
+                )
+                if not can_access:
+                    denied_topics.append(topic)
+
+            # Fail fast if any topics are denied
+            if denied_topics:
+                error = WebSocketError(
+                    type="error",
+                    code="SUBSCRIPTION_ERROR",
+                    message=f"Access denied to topics: {denied_topics}",
+                )
+                await websocket.send_json(error.model_dump(mode="json"))
+                await websocket.close()
+                return
+
+            # All topics are allowed - subscribe to them
             client_topics = subscribe_msg.topics
             await manager.connect(websocket, client_topics)
 

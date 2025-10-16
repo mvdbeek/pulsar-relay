@@ -10,9 +10,11 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.api import auth, health, messages, polling, websocket
-from app.auth.dependencies import set_user_storage
-from app.auth.storage import InMemoryUserStorage, create_default_users
+from app.api import auth, health, messages, polling, topics, websocket
+from app.auth.dependencies import set_topic_storage, set_user_storage
+from app.auth.models import UserCreate
+from app.auth.storage import InMemoryUserStorage
+from app.auth.topic_storage import InMemoryTopicStorage, TopicStorage, ValkeyTopicStorage
 from app.config import settings
 from app.core.connections import ConnectionManager
 from app.core.polling import PollManager
@@ -62,16 +64,46 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     poll_manager = PollManager()
     log.info("Initialized Poll Manager")
 
-    # Initialize user storage and create default users
+    # Initialize user storage
     user_storage = InMemoryUserStorage()
-    await create_default_users(user_storage)
     set_user_storage(user_storage)
-    log.info("Initialized User Storage with default users")
+    log.info("Initialized User Storage")
+
+    # Initialize topic storage
+    if settings.storage_backend == "valkey":
+        assert isinstance(storage, ValkeyStorage)
+        topic_storage: TopicStorage = ValkeyTopicStorage(storage._client)
+        log.info("Initialized Valkey Topic Storage")
+    else:
+        topic_storage = InMemoryTopicStorage()
+        log.info("Initialized In-Memory Topic Storage")
+
+    set_topic_storage(topic_storage)
+
+    # Bootstrap admin user if configured
+    if settings.bootstrap_admin_username and settings.bootstrap_admin_password:
+        try:
+            # Check if admin already exists
+            existing_admin = await user_storage.get_user_by_username(settings.bootstrap_admin_username)
+            if not existing_admin:
+                admin_data = UserCreate(
+                    username=settings.bootstrap_admin_username,
+                    password=settings.bootstrap_admin_password,
+                    email=settings.bootstrap_admin_email or f"{settings.bootstrap_admin_username}@example.com",
+                    permissions=["admin", "read", "write"],
+                )
+                admin_user = await user_storage.create_user(admin_data)
+                log.info(f"✅ Bootstrap admin created: {admin_user.username}")
+            else:
+                log.info(f"Bootstrap admin already exists: {settings.bootstrap_admin_username}")
+        except Exception as e:
+            log.error(f"Failed to create bootstrap admin: {e}")
 
     # Store in app state for access in routes
     app.state.storage = storage
     app.state.poll_manager = poll_manager
     app.state.user_storage = user_storage
+    app.state.topic_storage = topic_storage
 
     # Inject dependencies into API routers
     messages.set_storage(storage)
@@ -102,6 +134,7 @@ app = FastAPI(
 # Include routers
 app.include_router(health.router)
 app.include_router(auth.router, prefix="/auth", tags=["authentication"])
+app.include_router(topics.router)
 app.include_router(messages.router)
 app.include_router(websocket.router)
 app.include_router(polling.router, prefix="/messages", tags=["polling"])

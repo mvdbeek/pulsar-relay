@@ -6,9 +6,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api import messages, websocket
-from app.auth.dependencies import set_user_storage
+from app.auth.dependencies import set_topic_storage, set_user_storage
 from app.auth.jwt import create_access_token
 from app.auth.storage import InMemoryUserStorage, create_default_users
+from app.auth.topic_storage import InMemoryTopicStorage
 from app.core.connections import ConnectionManager
 from app.core.polling import PollManager
 from app.main import app
@@ -22,6 +23,12 @@ def auth_storage():
     loop = asyncio.get_event_loop()
     loop.run_until_complete(create_default_users(storage))
     return storage
+
+
+@pytest.fixture
+def topic_storage():
+    """Create a fresh topic storage."""
+    return InMemoryTopicStorage()
 
 
 @pytest.fixture
@@ -85,7 +92,7 @@ def readonly_headers(readonly_token):
 
 
 @pytest.fixture
-def test_client_with_auth(auth_storage):
+def test_client_with_auth(auth_storage, topic_storage):
     """Create a test client with full app state and authentication."""
     msg_storage = MemoryStorage()
     poll_manager = PollManager()
@@ -94,6 +101,10 @@ def test_client_with_auth(auth_storage):
     # Set up authentication
     set_user_storage(auth_storage)
     app.state.user_storage = auth_storage
+
+    # Set up topic storage
+    set_topic_storage(topic_storage)
+    app.state.topic_storage = topic_storage
 
     # Set up other app state
     app.state.storage = msg_storage

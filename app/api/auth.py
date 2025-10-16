@@ -121,6 +121,7 @@ async def register(
             is_active=user.is_active,
             created_at=user.created_at,
             permissions=user.permissions,
+            owned_topics=user.owned_topics,
         )
     except ValueError as e:
         raise HTTPException(
@@ -148,6 +149,7 @@ async def get_current_user_info(
         is_active=current_user.is_active,
         created_at=current_user.created_at,
         permissions=current_user.permissions,
+        owned_topics=current_user.owned_topics,
     )
 
 

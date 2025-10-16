@@ -7,7 +7,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.auth.dependencies import require_permission
+from app.auth.dependencies import get_or_create_topic, require_permission
 from app.auth.models import User
 from app.core.connections import ConnectionManager
 from app.core.polling import PollManager
@@ -75,11 +75,19 @@ async def create_message(
 
     Args:
         message: Message to create
+        current_user: Current authenticated user
 
     Returns:
         MessageResponse with message_id and timestamp
+
+    Raises:
+        HTTPException: If user doesn't have access to the topic
     """
     storage = get_storage()
+
+    # Ensure topic exists and user has write access
+    # This will auto-create the topic if it doesn't exist, with current_user as owner
+    await get_or_create_topic(message.topic, current_user)
 
     # Generate unique message ID
     message_id = f"msg_{uuid.uuid4().hex[:12]}"
@@ -134,11 +142,32 @@ async def create_bulk_messages(
 
     Args:
         request: Bulk message request
+        current_user: Current authenticated user
 
     Returns:
         BulkMessageResponse with results for each message
     """
     storage = get_storage()
+
+    # Validate access to ALL unique topics upfront - fail early if any are denied
+    unique_topics = {msg.topic for msg in request.messages}
+    denied_topics = set()
+
+    for topic in unique_topics:
+        try:
+            await get_or_create_topic(topic, current_user)
+        except HTTPException:
+            # Track topics that user doesn't have access to
+            denied_topics.add(topic)
+
+    # Fail fast if any topics are denied
+    if denied_topics:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access denied to topics: {sorted(denied_topics)}",
+        )
+
+    # All topics validated - proceed with message creation
     results: list[BulkMessageResult] = []
     accepted = 0
     rejected = 0

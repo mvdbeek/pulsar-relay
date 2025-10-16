@@ -6,7 +6,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.auth.dependencies import get_current_user, require_permission
+from app.auth.dependencies import get_current_user, get_topic_storage, require_permission
 from app.auth.models import User
 from app.core.polling import PollManager
 from app.storage.base import StorageBackend
@@ -70,6 +70,27 @@ async def long_poll(
     # Validate topics
     if not poll_request.topics:
         raise HTTPException(status_code=400, detail="At least one topic required")
+
+    # Validate access to ALL requested topics upfront - fail early if any are denied
+    topic_storage = get_topic_storage()
+    denied_topics = []
+
+    for topic in poll_request.topics:
+        can_access = await topic_storage.user_can_access(
+            topic_name=topic,
+            user_id=current_user.user_id,
+            permission_type="read",
+            user_permissions=current_user.permissions,
+        )
+        if not can_access:
+            denied_topics.append(topic)
+
+    # Fail fast if any topics are denied
+    if denied_topics:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access denied to topics: {denied_topics}",
+        )
 
     messages = []
 

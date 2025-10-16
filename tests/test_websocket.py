@@ -6,29 +6,43 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api import health, messages, websocket
-from app.auth.dependencies import set_user_storage
+from app.auth.dependencies import set_topic_storage, set_user_storage
 from app.auth.jwt import create_access_token
-from app.auth.storage import InMemoryUserStorage, create_default_users
+from app.auth.topic_storage import InMemoryTopicStorage
 from app.core.connections import ConnectionManager
 from app.main import app
 from app.storage.memory import MemoryStorage
 
 
+def create_test_topics(topic_storage, user_id, topic_names):
+    """Helper to create test topics for a user."""
+    loop = asyncio.get_event_loop()
+    from app.auth.models import TopicCreate
+
+    for topic_name in topic_names:
+        loop.run_until_complete(
+            topic_storage.create_topic(user_id, TopicCreate(topic_name=topic_name, is_public=False))
+        )
+
+
 @pytest.fixture
-def setup_app():
+def setup_app(auth_storage):
     """Set up app with fresh storage, connection manager, and authentication."""
     storage = MemoryStorage()
     manager = ConnectionManager()
+    topic_storage = InMemoryTopicStorage()
 
     # Set up authentication
-    user_storage = InMemoryUserStorage()
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(create_default_users(user_storage))
-    set_user_storage(user_storage)
-    app.state.user_storage = user_storage
+    set_user_storage(auth_storage)
+    app.state.user_storage = auth_storage
+
+    # Set up topic storage
+    set_topic_storage(topic_storage)
+    app.state.topic_storage = topic_storage
 
     # Get test user and create token
-    test_user = loop.run_until_complete(user_storage.get_user_by_username("user"))
+    test_user = loop.run_until_complete(auth_storage.get_user_by_username("user"))
     token = create_access_token(test_user)
 
     messages.set_storage(storage)
@@ -39,8 +53,10 @@ def setup_app():
     yield {
         "storage": storage,
         "manager": manager,
+        "topic_storage": topic_storage,
         "client": TestClient(app),
         "token": token,
+        "test_user": test_user,
         "auth_headers": {"Authorization": f"Bearer {token}"},
     }
 
@@ -54,6 +70,11 @@ class TestWebSocketBasics:
         """Test WebSocket connection and subscription."""
         client = setup_app["client"]
         token = setup_app["token"]
+        topic_storage = setup_app["topic_storage"]
+        test_user = setup_app["test_user"]
+
+        # Create topic first
+        create_test_topics(topic_storage, test_user.user_id, ["test-topic"])
 
         with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Send subscribe message
@@ -71,6 +92,11 @@ class TestWebSocketBasics:
         """Test WebSocket ping/pong."""
         client = setup_app["client"]
         token = setup_app["token"]
+        topic_storage = setup_app["topic_storage"]
+        test_user = setup_app["test_user"]
+
+        # Create topic first
+        create_test_topics(topic_storage, test_user.user_id, ["test"])
 
         with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Subscribe first
@@ -92,6 +118,11 @@ class TestWebSocketBasics:
         """Test WebSocket unsubscribe."""
         client = setup_app["client"]
         token = setup_app["token"]
+        topic_storage = setup_app["topic_storage"]
+        test_user = setup_app["test_user"]
+
+        # Create topics first
+        create_test_topics(topic_storage, test_user.user_id, ["topic1", "topic2", "topic3"])
 
         with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Subscribe to multiple topics
@@ -133,6 +164,11 @@ class TestWebSocketBasics:
         """Test WebSocket with unknown message type."""
         client = setup_app["client"]
         token = setup_app["token"]
+        topic_storage = setup_app["topic_storage"]
+        test_user = setup_app["test_user"]
+
+        # Create topic first
+        create_test_topics(topic_storage, test_user.user_id, ["test"])
 
         with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Subscribe first
@@ -159,6 +195,11 @@ class TestWebSocketMessageDelivery:
         client = setup_app["client"]
         token = setup_app["token"]
         auth_headers = setup_app["auth_headers"]
+        topic_storage = setup_app["topic_storage"]
+        test_user = setup_app["test_user"]
+
+        # Create topic first
+        create_test_topics(topic_storage, test_user.user_id, ["notifications"])
 
         with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Subscribe to topic
@@ -206,6 +247,11 @@ class TestWebSocketMessageDelivery:
         client = setup_app["client"]
         token = setup_app["token"]
         auth_headers = setup_app["auth_headers"]
+        topic_storage = setup_app["topic_storage"]
+        test_user = setup_app["test_user"]
+
+        # Create both topics so message sending works
+        create_test_topics(topic_storage, test_user.user_id, ["topic1", "topic2"])
 
         with client.websocket_connect(f"/ws?token={token}") as websocket:
             # Subscribe to topic1 only

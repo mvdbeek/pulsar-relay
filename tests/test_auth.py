@@ -13,37 +13,28 @@ from app.auth.jwt import (
     verify_password,
 )
 from app.auth.models import UserCreate
-from app.auth.storage import InMemoryUserStorage, create_default_users
+from app.auth.storage import InMemoryUserStorage
 from app.main import app
 
 
 @pytest.fixture
-def auth_storage():
-    """Create a fresh user storage for testing."""
-    storage = InMemoryUserStorage()
-    return storage
-
-
-@pytest.fixture
-def test_client():
+def test_client(auth_storage):
     """Create a test client with auth storage."""
-    import asyncio
-
     from app.api import messages
+    from app.auth.dependencies import set_topic_storage
+    from app.auth.topic_storage import InMemoryTopicStorage
     from app.core.polling import PollManager
     from app.storage.memory import MemoryStorage
 
-    user_storage = InMemoryUserStorage()
     msg_storage = MemoryStorage()
     poll_manager = PollManager()
-
-    # Create default users synchronously
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(create_default_users(user_storage))
+    topic_storage = InMemoryTopicStorage()
 
     # Set up app state
-    set_user_storage(user_storage)
-    app.state.user_storage = user_storage
+    set_user_storage(auth_storage)
+    set_topic_storage(topic_storage)
+    app.state.user_storage = auth_storage
+    app.state.topic_storage = topic_storage
     app.state.storage = msg_storage
     app.state.poll_manager = poll_manager
 
@@ -78,12 +69,9 @@ class TestJWTTokens:
     """Test JWT token creation and validation."""
 
     @pytest.mark.asyncio
-    async def test_create_and_decode_token(self):
+    async def test_create_and_decode_token(self, auth_storage):
         """Test creating and decoding JWT tokens."""
-        storage = InMemoryUserStorage()
-        await create_default_users(storage)
-
-        user = await storage.get_user_by_username("admin")
+        user = await auth_storage.get_user_by_username("admin")
 
         # Create token
         token = create_access_token(user)
@@ -103,12 +91,9 @@ class TestJWTTokens:
         assert payload is None
 
     @pytest.mark.asyncio
-    async def test_token_with_custom_expiration(self):
+    async def test_token_with_custom_expiration(self, auth_storage):
         """Test creating token with custom expiration."""
-        storage = InMemoryUserStorage()
-        await create_default_users(storage)
-
-        user = await storage.get_user_by_username("admin")
+        user = await auth_storage.get_user_by_username("admin")
 
         # Create token with 1-hour expiration
         expires_delta = timedelta(hours=1)
@@ -160,65 +145,53 @@ class TestUserStorage:
             await storage.create_user(user_data)
 
     @pytest.mark.asyncio
-    async def test_get_user_by_username(self):
+    async def test_get_user_by_username(self, auth_storage):
         """Test retrieving user by username."""
-        storage = InMemoryUserStorage()
-        await create_default_users(storage)
-
-        user = await storage.get_user_by_username("admin")
+        user = await auth_storage.get_user_by_username("admin")
 
         assert user is not None
         assert user.username == "admin"
         assert "admin" in user.permissions
 
     @pytest.mark.asyncio
-    async def test_get_user_by_id(self):
+    async def test_get_user_by_id(self, auth_storage):
         """Test retrieving user by ID."""
-        storage = InMemoryUserStorage()
-        await create_default_users(storage)
-
         # First get user by username to get the ID
-        user = await storage.get_user_by_username("admin")
+        user = await auth_storage.get_user_by_username("admin")
 
         # Now get by ID
-        user_by_id = await storage.get_user_by_id(user.user_id)
+        user_by_id = await auth_storage.get_user_by_id(user.user_id)
 
         assert user_by_id is not None
         assert user_by_id.user_id == user.user_id
         assert user_by_id.username == "admin"
 
     @pytest.mark.asyncio
-    async def test_update_user(self):
+    async def test_update_user(self, auth_storage):
         """Test updating a user."""
-        storage = InMemoryUserStorage()
-        await create_default_users(storage)
-
-        user = await storage.get_user_by_username("user")
+        user = await auth_storage.get_user_by_username("user")
 
         # Update user
         user.email = "newemail@example.com"
-        updated = await storage.update_user(user)
+        updated = await auth_storage.update_user(user)
 
         assert updated.email == "newemail@example.com"
 
         # Verify update persisted
-        fetched = await storage.get_user_by_id(user.user_id)
+        fetched = await auth_storage.get_user_by_id(user.user_id)
         assert fetched.email == "newemail@example.com"
 
     @pytest.mark.asyncio
-    async def test_delete_user(self):
+    async def test_delete_user(self, auth_storage):
         """Test deleting a user."""
-        storage = InMemoryUserStorage()
-        await create_default_users(storage)
-
-        user = await storage.get_user_by_username("readonly")
+        user = await auth_storage.get_user_by_username("readonly")
 
         # Delete user
-        deleted = await storage.delete_user(user.user_id)
+        deleted = await auth_storage.delete_user(user.user_id)
         assert deleted is True
 
         # Verify user is gone
-        fetched = await storage.get_user_by_id(user.user_id)
+        fetched = await auth_storage.get_user_by_id(user.user_id)
         assert fetched is None
 
 

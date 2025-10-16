@@ -155,39 +155,35 @@ class TestPollManager:
         assert waiter.client_id not in poll_manager._waiters
 
 
-@pytest.fixture
-def user_storage():
-    """Create user storage with default users."""
-    import asyncio
-
-    from app.auth.dependencies import set_user_storage
-    from app.auth.storage import InMemoryUserStorage, create_default_users
-
-    storage = InMemoryUserStorage()
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(create_default_users(storage))
-    set_user_storage(storage)
-    return storage
+# Use auth_storage fixture from conftest.py
 
 
 @pytest.fixture
-def auth_token(user_storage):
+def auth_token(auth_storage):
     """Create an auth token for a test user."""
     import asyncio
 
     from app.auth.jwt import create_access_token
 
     loop = asyncio.get_event_loop()
-    user = loop.run_until_complete(user_storage.get_user_by_username("user"))
+    user = loop.run_until_complete(auth_storage.get_user_by_username("user"))
     return create_access_token(user)
 
 
 @pytest.fixture
-def test_client(test_storage, poll_manager, user_storage):
+def test_client(test_storage, poll_manager, auth_storage):
     """Create a test client with properly initialized app state."""
+    from app.auth.dependencies import set_topic_storage, set_user_storage
+    from app.auth.topic_storage import InMemoryTopicStorage
+
+    topic_storage = InMemoryTopicStorage()
+
+    set_user_storage(auth_storage)
+    set_topic_storage(topic_storage)
     app.state.storage = test_storage
     app.state.poll_manager = poll_manager
-    app.state.user_storage = user_storage
+    app.state.user_storage = auth_storage
+    app.state.topic_storage = topic_storage
     return TestClient(app)
 
 
