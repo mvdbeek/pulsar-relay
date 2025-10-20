@@ -11,6 +11,7 @@ from app.auth.dependencies import get_or_create_topic, require_permission
 from app.auth.models import User
 from app.core.connections import ConnectionManager
 from app.core.polling import PollManager
+from app.core.pubsub import PubSubCoordinator
 from app.models import (
     BulkMessageRequest,
     BulkMessageResponse,
@@ -31,6 +32,7 @@ router = APIRouter(prefix="/api/v1", tags=["messages"])
 _storage: Optional[StorageBackend] = None
 _manager: Optional[ConnectionManager] = None
 _poll_manager: Optional[PollManager] = None
+_pubsub_coordinator: Optional[PubSubCoordinator] = None
 
 
 def set_storage(storage: StorageBackend) -> None:
@@ -49,6 +51,12 @@ def set_poll_manager(poll_manager: PollManager) -> None:
     """Set the poll manager for the messages API."""
     global _poll_manager
     _poll_manager = poll_manager
+
+
+def set_pubsub_coordinator(pubsub_coordinator: Optional[PubSubCoordinator]) -> None:
+    """Set the pub/sub coordinator for cross-worker message broadcasting."""
+    global _pubsub_coordinator
+    _pubsub_coordinator = pubsub_coordinator
 
 
 def get_storage() -> StorageBackend:
@@ -106,29 +114,30 @@ async def create_message(
             metadata=message.metadata,
         )
 
-    # Broadcast to WebSocket subscribers
-    manager = get_manager()
-    if manager:
-        ws_message = WebSocketMessage(
-            type="message",
-            message_id=message_id,
-            topic=message.topic,
-            payload=message.payload,
-            timestamp=timestamp,
-            metadata=message.metadata,
-        )
-        await manager.broadcast(message.topic, ws_message.model_dump(mode="json"))
+    # Prepare message for broadcasting
+    ws_message = WebSocketMessage(
+        type="message",
+        message_id=message_id,
+        topic=message.topic,
+        payload=message.payload,
+        timestamp=timestamp,
+        metadata=message.metadata,
+    )
+    message_dict = ws_message.model_dump(mode="json")
 
-    # Broadcast to long polling clients
-    if _poll_manager:
-        poll_message = {
-            "topic": message.topic,
-            "message_id": message_id,
-            "payload": message.payload,
-            "timestamp": timestamp.isoformat(),
-            "metadata": message.metadata or {},
-        }
-        await _poll_manager.broadcast_to_topic(message.topic, poll_message)
+    # If pub/sub coordinator is available, use it for cross-worker broadcasting
+    # Otherwise, fall back to local-only broadcasting
+    if _pubsub_coordinator:
+        # Publish to Valkey pub/sub - all workers will receive and broadcast to their local clients
+        await _pubsub_coordinator.publish_message(message.topic, message_dict)
+    else:
+        # Local-only broadcasting (single worker or in-memory mode)
+        manager = get_manager()
+        if manager:
+            await manager.broadcast(message.topic, message_dict)
+
+        if _poll_manager:
+            await _poll_manager.broadcast_to_topic(message.topic, message_dict)
 
     return MessageResponse(message_id=message_id, topic=message.topic, timestamp=timestamp)
 
@@ -187,29 +196,30 @@ async def create_bulk_messages(
                 metadata=message.metadata,
             )
 
-            # Broadcast to WebSocket subscribers
-            manager = get_manager()
-            if manager:
-                ws_message = WebSocketMessage(
-                    type="message",
-                    message_id=message_id,
-                    topic=message.topic,
-                    payload=message.payload,
-                    timestamp=timestamp,
-                    metadata=message.metadata,
-                )
-                await manager.broadcast(message.topic, ws_message.model_dump(mode="json"))
+            # Prepare message for broadcasting
+            ws_message = WebSocketMessage(
+                type="message",
+                message_id=message_id,
+                topic=message.topic,
+                payload=message.payload,
+                timestamp=timestamp,
+                metadata=message.metadata,
+            )
+            message_dict = ws_message.model_dump(mode="json")
 
-            # Broadcast to long polling clients
-            if _poll_manager:
-                poll_message = {
-                    "topic": message.topic,
-                    "message_id": message_id,
-                    "payload": message.payload,
-                    "timestamp": timestamp.isoformat(),
-                    "metadata": message.metadata or {},
-                }
-                await _poll_manager.broadcast_to_topic(message.topic, poll_message)
+            # If pub/sub coordinator is available, use it for cross-worker broadcasting
+            # Otherwise, fall back to local-only broadcasting
+            if _pubsub_coordinator:
+                # Publish to Valkey pub/sub - all workers will receive and broadcast to their local clients
+                await _pubsub_coordinator.publish_message(message.topic, message_dict)
+            else:
+                # Local-only broadcasting (single worker or in-memory mode)
+                manager = get_manager()
+                if manager:
+                    await manager.broadcast(message.topic, message_dict)
+
+                if _poll_manager:
+                    await _poll_manager.broadcast_to_topic(message.topic, message_dict)
 
             results.append(BulkMessageResult(message_id=message_id, topic=message.topic, status="accepted"))
             accepted += 1
