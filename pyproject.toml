@@ -1,3 +1,90 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pulsar-relay"
+version = "0.1.0"
+description = "High-performance message relay system for real-time message delivery via WebSocket and long-polling"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [
+    {name = "Marius van den Beek", email = "marius@galaxyproject.org"}
+]
+maintainers = [
+    {name = "Marius van den Beek", email = "marius@galaxyproject.org"}
+]
+keywords = [
+    "websocket",
+    "long-polling",
+    "message-relay",
+    "real-time",
+    "fastapi",
+    "valkey",
+    "redis"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Framework :: FastAPI",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: System :: Networking",
+]
+
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "python-multipart>=0.0.20",
+    "valkey-glide>=2.1.1",
+    "pwdlib[argon2]>=0.2.1",
+    "pyjwt>=2.10.1",
+    "pydantic>=2.12.0",
+    "pydantic-settings>=2.6.1",
+    "prometheus-fastapi-instrumentator>=7.0.0",
+    "prometheus-client>=0.21.0",
+    "tomli>=2.3.0",
+    "pyyaml>=6.0.2",
+    "structlog>=24.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.4",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "httpx>=0.27.2",
+    "httpx-ws>=0.6.0",
+    "websockets>=13.1",
+    "tox>=4.30.3",
+    "black>=24.10.0",
+    "ruff>=0.8.2",
+    "mypy>=1.13.0",
+    "types-PyYAML>=6.0.12.20250915",
+]
+
+[project.urls]
+Homepage = "https://github.com/mvdbeek/pulsar-relay"
+Documentation = "https://github.com/mvdbeek/pulsar-relay/blob/main/README.md"
+Repository = "https://github.com/mvdbeek/pulsar-relay"
+Issues = "https://github.com/mvdbeek/pulsar-relay/issues"
+Changelog = "https://github.com/mvdbeek/pulsar-relay/releases"
+
+[project.scripts]
+pulsar-relay = "app.main:main"
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.setuptools.package-data]
+app = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
@@ -9,7 +96,7 @@ markers = [
 
 [tool.black]
 line-length = 120
-target-version = ['py311']
+target-version = ['py39']
 
 [tool.ruff]
 line-length = 120

@@ -41,7 +41,6 @@ async def client(auth_storage):
     await storage.clear()
 
 
-@pytest.mark.asyncio
 class TestCreateMessage:
     """Tests for POST /api/v1/messages endpoint."""
 
@@ -120,7 +119,6 @@ class TestCreateMessage:
         assert stored_messages[0]["payload"] == {"data": "test"}
 
 
-@pytest.mark.asyncio
 class TestCreateBulkMessages:
     """Tests for POST /api/v1/messages/bulk endpoint."""
 
@@ -210,7 +208,6 @@ class TestCreateBulkMessages:
         assert stored_messages[1]["payload"] == {"id": 2}
 
 
-@pytest.mark.asyncio
 class TestHealthEndpoints:
     """Tests for health check endpoints."""
 

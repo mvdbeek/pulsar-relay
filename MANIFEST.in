@@ -1,0 +1,31 @@
+# Include documentation
+include README.md
+include LICENSE
+include ARCHITECTURE.md
+include API.md
+include AUTHENTICATION.md
+include QUICKSTART.md
+
+# Include config examples
+include config.yaml.example
+include config.toml.example
+include .env.example
+include valkey.conf
+
+# Include the py.typed marker for PEP 561
+recursive-include app py.typed
+
+# Exclude development and test files
+exclude tox.ini
+exclude client.py
+exclude prometheus.yml
+recursive-exclude tests *
+recursive-exclude benchmarks *
+recursive-exclude docs *
+recursive-exclude .github *
+
+# Exclude build artifacts
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude *.so
+global-exclude .DS_Store

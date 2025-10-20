@@ -61,6 +61,10 @@ build/
 *.egg
 .eggs/
 wheels/
+*.whl
+pip-wheel-metadata/
+.pybuilder/
+target/
 
 # Logs
 *.log
