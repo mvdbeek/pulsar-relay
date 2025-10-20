@@ -3,6 +3,7 @@
 import asyncio
 import datetime
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -228,16 +229,75 @@ class TestPollingEndpoint:
         assert data["messages"] == []
         assert data["has_more"] is False
 
-    @pytest.mark.skip(reason="TestClient doesn't support concurrent operations properly")
     @pytest.mark.asyncio
-    async def test_poll_receives_new_message(self, test_client):
+    async def test_poll_receives_new_message(self, real_server):
         """Test polling receives a message that arrives during wait.
 
-        Note: This test is skipped because TestClient is synchronous and doesn't
-        support testing concurrent polling + publishing in a realistic way.
-        This functionality is tested in production with real async clients.
+        This test uses a real server instance to properly test concurrent
+        polling and message publishing.
         """
-        pass
+        base_url = real_server["base_url"]
+        username = real_server["username"]
+        password = real_server["password"]
+
+        async with httpx.AsyncClient() as client:
+            # Login to get a token
+            login_response = await client.post(
+                f"{base_url}/auth/login",
+                data={"username": username, "password": password},
+            )
+            assert login_response.status_code == 200
+            token = login_response.json()["access_token"]
+            headers = {"Authorization": f"Bearer {token}"}
+
+            # Start a long poll in the background (10 second timeout)
+            async def start_poll():
+                poll_response = await client.post(
+                    f"{base_url}/messages/poll",
+                    json={
+                        "topics": ["test-topic"],
+                        "timeout": 10,
+                    },
+                    headers=headers,
+                    timeout=15.0,  # HTTP timeout longer than poll timeout
+                )
+                return poll_response
+
+            # Send a message after a short delay
+            async def send_message():
+                # Wait a bit to ensure poll request is waiting
+                await asyncio.sleep(1)
+
+                # Send a message to the topic
+                msg_response = await client.post(
+                    f"{base_url}/api/v1/messages",
+                    json={
+                        "topic": "test-topic",
+                        "payload": {"data": "test message"},
+                    },
+                    headers=headers,
+                )
+                return msg_response
+
+            # Run both operations concurrently
+            poll_task = asyncio.create_task(start_poll())
+            msg_task = asyncio.create_task(send_message())
+
+            # Wait for both to complete
+            poll_response, msg_response = await asyncio.gather(poll_task, msg_task)
+
+            # Verify message was sent successfully
+            assert msg_response.status_code == 201
+            message_id = msg_response.json()["message_id"]
+
+            # Verify poll received the message
+            assert poll_response.status_code == 200
+            poll_data = poll_response.json()
+            assert "messages" in poll_data
+            assert len(poll_data["messages"]) == 1
+            assert poll_data["messages"][0]["message_id"] == message_id
+            assert poll_data["messages"][0]["topic"] == "test-topic"
+            assert poll_data["messages"][0]["payload"]["data"] == "test message"
 
     @pytest.mark.asyncio
     async def test_poll_with_since_parameter(self, test_storage, test_client, auth_token):
