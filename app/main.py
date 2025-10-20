@@ -18,6 +18,7 @@ from app.auth.topic_storage import InMemoryTopicStorage, TopicStorage, ValkeyTop
 from app.config import settings
 from app.core.connections import ConnectionManager
 from app.core.polling import PollManager
+from app.core.pubsub import PubSubCoordinator
 from app.storage.memory import MemoryStorage
 from app.storage.valkey import ValkeyStorage
 
@@ -73,6 +74,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     poll_manager = PollManager()
     log.info("Initialized Poll Manager")
 
+    # Initialize pub/sub coordinator for multi-worker message broadcasting
+    # Only enable if using Valkey backend (required for cross-worker coordination)
+    pubsub_coordinator = None
+    if settings.storage_backend == "valkey" and isinstance(storage, ValkeyStorage):
+        pubsub_coordinator = PubSubCoordinator(storage._client)
+
+        # Register handlers to broadcast messages to local clients
+        async def handle_pubsub_message(topic: str, message_data: dict) -> None:
+            """Handle incoming pub/sub messages and broadcast to local clients."""
+            # Broadcast to WebSocket clients on this worker
+            await connection_manager.broadcast(topic, message_data)
+
+            # Broadcast to long-polling clients on this worker
+            await poll_manager.broadcast_to_topic(topic, message_data)
+
+        pubsub_coordinator.register_handler(handle_pubsub_message)
+        await pubsub_coordinator.start()
+        log.info("Initialized PubSub Coordinator for multi-worker broadcasting")
+
     set_user_storage(user_storage)
     set_topic_storage(topic_storage)
 
@@ -100,11 +120,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.poll_manager = poll_manager
     app.state.user_storage = user_storage
     app.state.topic_storage = topic_storage
+    app.state.pubsub_coordinator = pubsub_coordinator
 
     # Inject dependencies into API routers
     messages.set_storage(storage)
     messages.set_manager(connection_manager)
     messages.set_poll_manager(poll_manager)
+    messages.set_pubsub_coordinator(pubsub_coordinator)
     health.set_storage(storage)
     websocket.set_manager(connection_manager)
 
@@ -114,6 +136,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown: Cleanup resources
     log.info("Shutting down application...")
+    if pubsub_coordinator:
+        await pubsub_coordinator.stop()
     await storage.close()
     log.info("Application shutdown complete")
 

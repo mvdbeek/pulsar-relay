@@ -1,6 +1,7 @@
 """Shared test fixtures and utilities."""
 
 import asyncio
+import os
 import socket
 import subprocess
 
@@ -119,7 +120,7 @@ def test_client_with_auth(auth_storage, topic_storage):
 
 
 @pytest.fixture
-async def real_server():
+async def real_server(request):
     """Spin up a real pulsar-relay server instance for integration testing.
 
     This fixture is useful for testing scenarios that require multiple concurrent
@@ -129,25 +130,23 @@ async def real_server():
     The server is started with a bootstrap admin user configured via environment
     variables, and a free port is automatically allocated to avoid conflicts.
 
+    Supports parameterization via pytest.mark.parametrize or indirect parameters:
+        - workers: Number of uvicorn workers (default: 1)
+        - storage_backend: "memory" or "valkey" (default: "memory")
+        - valkey_host: Valkey host (default: "localhost")
+        - valkey_port: Valkey port (default: 6379)
+
     Example usage:
-        async def test_multiple_websockets(real_server):
+        # Single worker with memory storage (default)
+        async def test_single_worker(real_server):
             base_url = real_server["base_url"]
-            ws_url = real_server["ws_url"]
 
-            # Login to get a token
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{base_url}/auth/login",
-                    data={"username": real_server["username"],
-                          "password": real_server["password"]}
-                )
-                token = response.json()["access_token"]
-
-            # Connect multiple WebSocket clients
-            async with websockets.connect(f"{ws_url}/ws?token={token}") as ws1:
-                async with websockets.connect(f"{ws_url}/ws?token={token}") as ws2:
-                    # Test concurrent connections...
-                    pass
+        # Multiple workers with Valkey (using indirect param)
+        @pytest.mark.parametrize("real_server", [
+            {"workers": 3, "storage_backend": "valkey"}
+        ], indirect=True)
+        async def test_multiworker(real_server):
+            assert real_server["workers"] == 3
 
     Yields:
         dict: Server configuration with keys:
@@ -156,7 +155,15 @@ async def real_server():
             - username: Bootstrap admin username
             - password: Bootstrap admin password
             - email: Bootstrap admin email
+            - workers: Number of workers started
+            - storage_backend: Storage backend in use
     """
+    # Get parameters from request (if using indirect parametrize) or use defaults
+    params = getattr(request, "param", {})
+    workers = params.get("workers", 1)
+    storage_backend = params.get("storage_backend", "memory")
+    valkey_host = params.get("valkey_host", "localhost")
+    valkey_port = params.get("valkey_port", 6379)
 
     def find_free_port():
         """Find an available port."""
@@ -175,33 +182,58 @@ async def real_server():
     password = "testpass123"
     email = "test@example.com"
 
-    # Start the server with bootstrap admin configuration
+    # Build environment variables
     env = {
+        **os.environ,
         "PULSAR_BOOTSTRAP_ADMIN_USERNAME": username,
         "PULSAR_BOOTSTRAP_ADMIN_PASSWORD": password,
         "PULSAR_BOOTSTRAP_ADMIN_EMAIL": email,
+        "PULSAR_STORAGE_BACKEND": storage_backend,
     }
 
+    # Add Valkey config if using valkey backend
+    if storage_backend == "valkey":
+        env["PULSAR_VALKEY_HOST"] = str(valkey_host)
+        env["PULSAR_VALKEY_PORT"] = str(valkey_port)
+        env["PULSAR_LOG_LEVEL"] = "INFO"
+
+    # Build uvicorn command
+    cmd = [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+    ]
+
+    # Add workers if > 1
+    if workers > 1:
+        cmd.extend(["--workers", str(workers)])
+
     process = subprocess.Popen(
-        ["uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(port)],
+        cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env={**subprocess.os.environ, **env},
+        env=env,
     )
 
     try:
-        # Wait for server to start and be ready
-        await asyncio.sleep(3)
+        # Wait for server to start - longer wait for multiple workers
+        startup_time = 3 if workers == 1 else 5
+        await asyncio.sleep(startup_time)
 
         # Verify server is responding
+        max_attempts = 20 if workers > 1 else 10
         async with httpx.AsyncClient() as client:
-            for _ in range(10):
+            for attempt in range(max_attempts):
                 try:
                     health_response = await client.get(f"{base_url}/health")
                     if health_response.status_code == 200:
                         break
                 except Exception:
-                    pass
+                    if attempt == max_attempts - 1:
+                        raise Exception(f"Server failed to start after {max_attempts} attempts")
                 await asyncio.sleep(0.5)
 
         yield {
@@ -210,13 +242,16 @@ async def real_server():
             "username": username,
             "password": password,
             "email": email,
+            "workers": workers,
+            "storage_backend": storage_backend,
         }
 
     finally:
         # Terminate the server
         process.terminate()
         try:
-            process.wait(timeout=5)
+            timeout = 10 if workers > 1 else 5
+            process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
