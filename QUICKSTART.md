@@ -116,7 +116,6 @@ go build -o pulsar-relay ./cmd/relay
 # Run with environment variables
 VALKEY_HOST=localhost \
 VALKEY_PORT=6379 \
-VALKEY_PASSWORD=changeme \
 ./pulsar-relay
 ```
 
@@ -251,7 +250,6 @@ In `config.yaml`:
 
 ```yaml
 storage:
-  hot_tier_retention: 10m        # In-memory buffer
   persistent_tier_retention: 24h  # How long to keep in Valkey
   max_messages_per_topic: 1000000 # Max messages per topic stream
 ```
@@ -325,11 +323,6 @@ Tune based on workload:
 
 ```yaml
 # config.yaml
-storage:
-  hot_tier_retention: 10m  # Increase for more in-memory caching
-
-limits:
-  max_connections_per_instance: 10000
 
 valkey:
   pool_size: 100  # Increase for high concurrency

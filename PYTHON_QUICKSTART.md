@@ -357,15 +357,9 @@ class Settings(BaseSettings):
     # Valkey
     valkey_host: str = "localhost"
     valkey_port: int = 6379
-    valkey_password: str = ""
 
     # Storage
-    hot_tier_retention: int = 600  # 10 minutes
     max_messages_per_topic: int = 1000000
-
-    # Limits
-    max_connections_per_instance: int = 10000
-    max_message_size: int = 1048576  # 1MB
 
     model_config = SettingsConfigDict(
         env_file=".env",

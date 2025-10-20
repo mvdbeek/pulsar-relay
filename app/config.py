@@ -96,21 +96,12 @@ class Settings(BaseSettings):
         ge=1,
         le=65535,
     )
-    valkey_password: str = Field(
-        default="",
-        description="Valkey password (empty for no auth)",
-    )
     valkey_use_tls: bool = Field(
         default=False,
         description="Use TLS for Valkey connection",
     )
 
     # Storage Configuration
-    hot_tier_retention: int = Field(
-        default=600,
-        description="Hot tier retention in seconds (in-memory cache)",
-        ge=1,
-    )
     persistent_tier_retention: int = Field(
         default=86400,
         description="Persistent tier retention in seconds (Valkey)",
@@ -119,23 +110,6 @@ class Settings(BaseSettings):
     max_messages_per_topic: int = Field(
         default=1000000,
         description="Maximum messages to store per topic",
-        ge=1,
-    )
-
-    # Limits
-    max_connections_per_instance: int = Field(
-        default=10000,
-        description="Maximum WebSocket connections per instance",
-        ge=1,
-    )
-    max_message_size: int = Field(
-        default=1048576,
-        description="Maximum message size in bytes (1MB)",
-        ge=1024,
-    )
-    rate_limit_per_client: int = Field(
-        default=1000,
-        description="Rate limit per client (messages per minute)",
         ge=1,
     )
 
@@ -149,15 +123,6 @@ class Settings(BaseSettings):
     jwt_secret_key: str = Field(
         default="your-secret-key-here-change-in-production",
         description="JWT secret key for token signing (CHANGE IN PRODUCTION!)",
-    )
-    jwt_algorithm: str = Field(
-        default="HS256",
-        description="JWT signing algorithm",
-    )
-    jwt_expiration_minutes: int = Field(
-        default=60,
-        description="JWT token expiration time in minutes",
-        ge=1,
     )
 
     # Bootstrap Admin (created automatically on first startup if doesn't exist)

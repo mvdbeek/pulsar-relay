@@ -24,7 +24,7 @@ A high-performance message relay system for real-time message delivery to client
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/pulsar-relay.git
+git clone https://github.com/mvdbeek/pulsar-relay.git
 cd pulsar-relay
 
 # Set up configuration
@@ -33,7 +33,12 @@ cp config.example.yaml config.yaml
 
 # Start Valkey (if not already running)
 docker run -d -p 6379:6379 -v valkey-data:/data valkey/valkey --appendonly yes
+export PULSAR_STORAGE_BACKEND=valkey
+export PULSAR_VALKEY_HOST=valkey.example.com
+export PULSAR_JWT_SECRET_KEY=your-secure-secret-key
 
+# Start the server (port and workers controlled by uvicorn)
+uvicorn app.main:app --host 0.0.0.0 --port 9000 --workers 4
 ```
 
 ## Usage
@@ -165,14 +170,8 @@ valkey:
   # appendfsync everysec
 
 storage:
-  hot_tier_retention: 10m        # In-memory buffer
   persistent_tier_retention: 24h  # Valkey streams retention
   max_messages_per_topic: 1000000 # Trim streams at this count
-
-limits:
-  max_connections_per_instance: 10000
-  max_message_size: 1048576  # 1MB
-  rate_limit_per_client: 1000  # messages per minute
 ```
 
 ## API Reference

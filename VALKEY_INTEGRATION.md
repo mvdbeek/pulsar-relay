@@ -46,7 +46,6 @@ STORAGE_BACKEND=valkey
 # Valkey connection settings
 VALKEY_HOST=localhost
 VALKEY_PORT=6379
-VALKEY_PASSWORD=          # Optional password
 VALKEY_USE_TLS=false      # Enable TLS for secure connections
 
 # Storage retention policies

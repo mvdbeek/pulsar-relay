@@ -85,20 +85,12 @@ All environment variables are prefixed with `PULSAR_`:
 
 - `PULSAR_VALKEY_HOST` - Valkey server host (default: "localhost")
 - `PULSAR_VALKEY_PORT` - Valkey server port (default: 6379)
-- `PULSAR_VALKEY_PASSWORD` - Valkey password (default: "")
 - `PULSAR_VALKEY_USE_TLS` - Use TLS for Valkey (default: false)
 
 ### Storage Settings
 
-- `PULSAR_HOT_TIER_RETENTION` - Hot tier retention in seconds (default: 600)
 - `PULSAR_PERSISTENT_TIER_RETENTION` - Persistent tier retention in seconds (default: 86400)
 - `PULSAR_MAX_MESSAGES_PER_TOPIC` - Maximum messages per topic (default: 1000000)
-
-### Limits
-
-- `PULSAR_MAX_CONNECTIONS_PER_INSTANCE` - Max WebSocket connections (default: 10000)
-- `PULSAR_MAX_MESSAGE_SIZE` - Max message size in bytes (default: 1048576)
-- `PULSAR_RATE_LIMIT_PER_CLIENT` - Rate limit per client per minute (default: 1000)
 
 ### Logging
 
@@ -107,8 +99,6 @@ All environment variables are prefixed with `PULSAR_`:
 ### Authentication
 
 - `PULSAR_JWT_SECRET_KEY` - JWT secret key for signing tokens (**CHANGE IN PRODUCTION!**)
-- `PULSAR_JWT_ALGORITHM` - JWT signing algorithm (default: "HS256")
-- `PULSAR_JWT_EXPIRATION_MINUTES` - Token expiration time in minutes (default: 60)
 
 ### Config File Location
 
@@ -208,7 +198,6 @@ export PULSAR_STORAGE_BACKEND=valkey
 export PULSAR_VALKEY_HOST=valkey.prod.example.com
 export PULSAR_VALKEY_PORT=6379
 export PULSAR_VALKEY_USE_TLS=true
-export PULSAR_VALKEY_PASSWORD="${VALKEY_PASSWORD}"  # From secret manager
 export PULSAR_LOG_LEVEL=WARNING
 export PULSAR_JWT_SECRET_KEY="${JWT_SECRET}"  # From secret manager
 
@@ -280,11 +269,6 @@ spec:
             secretKeyRef:
               name: pulsar-relay-secrets
               key: jwt-secret
-        - name: PULSAR_VALKEY_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: pulsar-relay-secrets
-              key: valkey-password
         volumeMounts:
         - name: config
           mountPath: /app/config.toml

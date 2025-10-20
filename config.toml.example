@@ -25,32 +25,16 @@ storage_backend = "memory"
 # ============================================================================
 valkey_host = "localhost"
 valkey_port = 6379
-valkey_password = ""  # Leave empty if no authentication
 valkey_use_tls = false
 
 # ============================================================================
 # Storage Configuration
 # ============================================================================
-# Hot tier retention in seconds (in-memory cache)
-hot_tier_retention = 600  # 10 minutes
-
 # Persistent tier retention in seconds (Valkey)
 persistent_tier_retention = 86400  # 24 hours
 
 # Maximum messages to store per topic
 max_messages_per_topic = 1000000
-
-# ============================================================================
-# Limits
-# ============================================================================
-# Maximum WebSocket connections per instance
-max_connections_per_instance = 10000
-
-# Maximum message size in bytes
-max_message_size = 1048576  # 1MB
-
-# Rate limit per client (messages per minute)
-rate_limit_per_client = 1000
 
 # ============================================================================
 # Logging
@@ -64,12 +48,6 @@ log_level = "INFO"
 # IMPORTANT: Change this in production!
 # Generate a secure key: python -c "import secrets; print(secrets.token_urlsafe(32))"
 jwt_secret_key = "your-secret-key-here-change-in-production"
-
-# JWT signing algorithm
-jwt_algorithm = "HS256"
-
-# JWT token expiration time in minutes
-jwt_expiration_minutes = 60
 
 # ============================================================================
 # Example Production Configuration
