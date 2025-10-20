@@ -306,7 +306,7 @@ async def get_or_create_topic(topic_name: str, current_user: User):
 
         return topic
     except Exception as e:
-        logger.error(f"Failed to create topic '{topic_name}': {e}")
+        logger.exception(f"Failed to create topic '{topic_name}': {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create topic: {str(e)}",

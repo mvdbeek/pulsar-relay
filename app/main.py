@@ -13,7 +13,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from app.api import auth, health, messages, polling, topics, websocket
 from app.auth.dependencies import set_topic_storage, set_user_storage
 from app.auth.models import UserCreate
-from app.auth.storage import InMemoryUserStorage, ValkeyUserStorage
+from app.auth.storage import InMemoryUserStorage, UserStorage, ValkeyUserStorage
 from app.auth.topic_storage import InMemoryTopicStorage, TopicStorage, ValkeyTopicStorage
 from app.config import settings
 from app.core.connections import ConnectionManager
@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         log.info(f"Connected to Valkey at {settings.valkey_host}:{settings.valkey_port}")
         topic_storage: TopicStorage = ValkeyTopicStorage(storage._client)
         log.info("Initialized Valkey Topic Storage")
-        user_storage = ValkeyUserStorage(storage._client)
+        user_storage: UserStorage = ValkeyUserStorage(storage._client)
         log.info("Initialized Valkey User Storage")
     else:
         log.info("Using in-memory storage backend")

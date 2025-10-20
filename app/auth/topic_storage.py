@@ -355,37 +355,38 @@ class ValkeyTopicStorage(TopicStorage):
         return f"user:{user_id}:topics"
 
     async def create_topic(self, owner_id: str, topic_data: TopicCreate) -> Topic:
-        """Create a new topic."""
+        """Create a new topic atomically using HSETNX."""
         topic_key = self._get_topic_key(topic_data.topic_name)
-
-        # Check if topic already exists
-        exists = await self._client.exists([topic_key])
-        if exists > 0:
-            raise ValueError(f"Topic '{topic_data.topic_name}' already exists")
 
         # Create topic
         topic_id = str(uuid4())
+        created_at = datetime.now(timezone.utc)
         topic = Topic(
             topic_id=topic_id,
             topic_name=topic_data.topic_name,
             owner_id=owner_id,
             is_public=topic_data.is_public,
             description=topic_data.description,
-            created_at=datetime.now(timezone.utc),
+            created_at=created_at,
             allowed_user_ids=[],
         )
 
-        # Store topic as hash
-        topic_hash = {
-            "topic_id": topic.topic_id,
+        # Atomically create topic using HSETNX on a sentinel field (topic_id)
+        # Returns 1 if field was set (topic didn't exist), 0 if field already exists
+        created = await self._client.hsetnx(topic_key, "topic_id", topic.topic_id)
+
+        if not created:
+            raise ValueError(f"Topic '{topic_data.topic_name}' already exists")
+
+        # Topic was successfully created, now set remaining fields
+        remaining_fields = {
             "topic_name": topic.topic_name,
             "owner_id": topic.owner_id,
             "is_public": str(topic.is_public),
             "description": topic.description or "",
             "created_at": topic.created_at.isoformat(),
         }
-
-        await self._client.hset(topic_key, list(topic_hash.items()))
+        await self._client.hset(topic_key, remaining_fields)
 
         # Add to user's owned topics set
         user_owned_key = self._get_user_owned_topics_key(owner_id)

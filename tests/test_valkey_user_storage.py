@@ -25,8 +25,8 @@ class TestValkeyUserStorage:
     @pytest.mark.asyncio
     async def test_create_user(self, valkey_user_storage):
         """Test creating a new user."""
-        # Mock hget to return None (username doesn't exist in index)
-        valkey_user_storage._client.hget = AsyncMock(return_value=None)
+        # Mock hsetnx to return True (username successfully claimed)
+        valkey_user_storage._client.hsetnx = AsyncMock(return_value=True)
         valkey_user_storage._client.hset = AsyncMock()
 
         user_data = UserCreate(
@@ -47,17 +47,17 @@ class TestValkeyUserStorage:
         assert user.user_id is not None
         assert user.user_id != user.username  # UUID, not username
 
-        # Verify hget was called to check username index
-        valkey_user_storage._client.hget.assert_called_once()
+        # Verify hsetnx was called to atomically claim username
+        valkey_user_storage._client.hsetnx.assert_called_once()
 
-        # Verify hset was called twice (once for user data, once for username index)
-        assert valkey_user_storage._client.hset.call_count == 2
+        # Verify hset was called once for user data (username index set via hsetnx)
+        assert valkey_user_storage._client.hset.call_count == 1
 
     @pytest.mark.asyncio
     async def test_create_user_duplicate_username(self, valkey_user_storage):
         """Test creating a user with duplicate username raises ValueError."""
-        # Mock hget to return existing user_id (username exists in index)
-        valkey_user_storage._client.hget = AsyncMock(return_value=b"existing-user-id-123")
+        # Mock hsetnx to return False (username claim failed - already exists)
+        valkey_user_storage._client.hsetnx = AsyncMock(return_value=False)
 
         user_data = UserCreate(
             username="duplicate",

@@ -6,6 +6,7 @@ Start Valkey with: docker run -d -p 6379:6379 valkey/valkey:latest
 Run these tests with: VALKEY_INTEGRATION_TEST=1 pytest tests/test_valkey_user_integration.py -v
 """
 
+import asyncio
 import os
 from datetime import datetime, timezone
 
@@ -323,7 +324,6 @@ class TestValkeyUserStorageIntegrationMultipleUsers:
     @pytest.mark.asyncio
     async def test_concurrent_user_creation(self, valkey_user_storage):
         """Test that usernames remain unique even with concurrent operations."""
-        import asyncio
 
         async def create_user(index: int):
             user_data = UserCreate(
@@ -349,7 +349,6 @@ class TestValkeyUserStorageIntegrationMultipleUsers:
 
         This test specifically validates the race condition fix using HSETNX for atomic username claims.
         """
-        import asyncio
 
         async def create_admin_user():
             user_data = UserCreate(
@@ -363,14 +362,18 @@ class TestValkeyUserStorageIntegrationMultipleUsers:
         # Try to create the same user 10 times concurrently
         results = await asyncio.gather(*[create_admin_user() for _ in range(10)], return_exceptions=True)
 
-        # Count successes and failures
+        # Count successes and failures (create_user returns User, not UserCreate)
         successes = [r for r in results if isinstance(r, User)]
         failures = [r for r in results if isinstance(r, ValueError)]
 
         # Exactly one should succeed
-        assert len(successes) == 1, f"Expected exactly 1 success, got {len(successes)}"
+        assert len(successes) == 1, f"Expected exactly 1 success, got {len(successes)}. Results: {results}"
         # The rest should fail with ValueError
-        assert len(failures) == 9, f"Expected 9 failures, got {len(failures)}"
+        assert len(failures) == 9, f"Expected 9 failures, got {len(failures)}. Failures: {failures}"
+
+        # Verify all failures have the correct error message
+        for failure in failures:
+            assert "already exists" in str(failure)
 
         # Verify the successful user was created
         admin_user = successes[0]
@@ -382,15 +385,9 @@ class TestValkeyUserStorageIntegrationMultipleUsers:
         assert retrieved is not None
         assert retrieved.user_id == admin_user.user_id
 
-        # Verify there's only one user_id in the username index
-        from app.auth.models import User
-        all_admins = []
-        for result in results:
-            if isinstance(result, User) and result.username == "admin":
-                all_admins.append(result.user_id)
-
-        # All successful results should have the same user_id
-        assert len(set(all_admins)) == 1, f"Expected all admin users to have same ID, got {set(all_admins)}"
+        # Verify there's only one unique user_id among all successful results
+        user_ids = [r.user_id for r in results if isinstance(r, User)]
+        assert len(set(user_ids)) == 1, f"Expected all admin users to have same ID, got {set(user_ids)}"
 
 
 class TestValkeyUserStorageIntegrationEdgeCases:
