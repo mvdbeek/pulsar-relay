@@ -155,7 +155,6 @@ Configuration is managed via YAML file or environment variables:
 ```yaml
 server:
   http_port: 8080
-  ws_port: 8081
   read_timeout: 30s
   write_timeout: 30s
 
@@ -195,36 +194,6 @@ See [API.md](./API.md) for complete API documentation.
 - `GET /ready` - Readiness check endpoint
 - `GET /metrics` - Prometheus metrics
 
-## Monitoring
-
-### Prometheus Metrics
-
-Available at `http://localhost:8080/metrics`:
-
-- `relay_connections_total` - Active connections by type
-- `relay_messages_received_total` - Inbound message rate
-- `relay_messages_delivered_total` - Outbound message rate
-- `relay_message_latency_seconds` - Message delivery latency
-- `relay_queue_depth` - Pending messages per topic
-
-### Valkey Monitoring
-
-Monitor Valkey persistence and performance:
-
-```bash
-# Check persistence status
-valkey-cli INFO persistence
-
-# Monitor stream sizes
-valkey-cli XLEN topic:notifications
-
-# Check memory usage
-valkey-cli INFO memory
-
-# View slow queries
-valkey-cli SLOWLOG GET 10
-```
-
 ## Performance
 
 ### Benchmarks
@@ -246,62 +215,10 @@ save 300 10
 save 60 10000
 ```
 
-## Development
-
-### Building
-
-```bash
-# Build binary
-make build
-
-# Run tests
-make test
-
-# Run with race detector
-make test-race
-
-# Lint code
-make lint
-
-# Generate mocks
-make mocks
-```
-
-### Project Structure
-
-```
-.
-├── cmd/
-│   └── relay/          # Main application entry point
-├── internal/
-│   ├── api/            # HTTP and WebSocket handlers
-│   ├── auth/           # Authentication and authorization
-│   ├── config/         # Configuration management
-│   ├── storage/        # Storage layer (memory + Valkey streams)
-│   ├── manager/        # Connection and subscription management
-│   └── metrics/        # Prometheus metrics
-├── pkg/
-│   └── client/         # Client libraries
-├── docs/               # Additional documentation
-└── tests/
-    ├── integration/    # Integration tests
-    └── load/           # Load testing scripts
-```
-
 ## Security
 
-- TLS 1.3 for all connections
-- JWT or API key authentication
+- JWT authentication
 - Rate limiting and request validation
-- Optional message payload encryption
-- PII data masking in logs
-
-Valkey should be configured with authentication:
-
-```conf
-# valkey.conf
-requirepass your-strong-password
-```
 
 ## Contributing
 

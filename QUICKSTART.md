@@ -207,26 +207,6 @@ docker-compose exec valkey valkey-cli INFO stream
 docker-compose exec valkey valkey-cli SLOWLOG GET 10
 ```
 
-### Prometheus Metrics
-
-Access metrics at http://localhost:9090/metrics
-
-Key metrics:
-- `relay_messages_received_total` - Total messages received
-- `relay_messages_delivered_total` - Total messages delivered
-- `relay_valkey_operations_total` - Valkey operation count
-- `relay_valkey_errors_total` - Valkey errors
-
-### Grafana Dashboards
-
-Access Grafana at http://localhost:3000 (admin/admin)
-
-Pre-configured dashboards for:
-- Message throughput
-- Connection stats
-- Valkey performance
-- System resources
-
 ## Message Retention & Cleanup
 
 ### Automatic Stream Trimming
