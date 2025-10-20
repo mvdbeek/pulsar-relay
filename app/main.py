@@ -13,7 +13,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from app.api import auth, health, messages, polling, topics, websocket
 from app.auth.dependencies import set_topic_storage, set_user_storage
 from app.auth.models import UserCreate
-from app.auth.storage import InMemoryUserStorage
+from app.auth.storage import InMemoryUserStorage, ValkeyUserStorage
 from app.auth.topic_storage import InMemoryTopicStorage, TopicStorage, ValkeyTopicStorage
 from app.config import settings
 from app.core.connections import ConnectionManager
@@ -52,9 +52,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Connect to Valkey
         await storage.connect()
         log.info(f"Connected to Valkey at {settings.valkey_host}:{settings.valkey_port}")
+        topic_storage: TopicStorage = ValkeyTopicStorage(storage._client)
+        log.info("Initialized Valkey Topic Storage")
+        user_storage = ValkeyUserStorage(storage._client)
+        log.info("Initialized Valkey User Storage")
     else:
         log.info("Using in-memory storage backend")
         storage = MemoryStorage(max_messages_per_topic=settings.max_messages_per_topic)
+        # Initialize user storage
+        user_storage = InMemoryUserStorage()
+        log.info("Initialized In-Memory User Storage")
+        topic_storage = InMemoryTopicStorage()
+        log.info("Initialized In-Memory Topic Storage")
 
     # Initialize connection manager
     connection_manager = ConnectionManager()
@@ -64,20 +73,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     poll_manager = PollManager()
     log.info("Initialized Poll Manager")
 
-    # Initialize user storage
-    user_storage = InMemoryUserStorage()
     set_user_storage(user_storage)
-    log.info("Initialized User Storage")
-
-    # Initialize topic storage
-    if settings.storage_backend == "valkey":
-        assert isinstance(storage, ValkeyStorage)
-        topic_storage: TopicStorage = ValkeyTopicStorage(storage._client)
-        log.info("Initialized Valkey Topic Storage")
-    else:
-        topic_storage = InMemoryTopicStorage()
-        log.info("Initialized In-Memory Topic Storage")
-
     set_topic_storage(topic_storage)
 
     # Bootstrap admin user if configured
