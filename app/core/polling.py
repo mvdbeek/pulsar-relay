@@ -4,7 +4,8 @@ import asyncio
 import datetime
 import logging
 from collections import defaultdict
-from typing import Any
+from sys import version_info
+from typing import Any, Optional
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,17 @@ class PollManager:
         """Initialize the poll manager."""
         self._waiters: dict[str, PollWaiter] = {}
         self._topic_subscribers: dict[str, set[str]] = defaultdict(set)
-        self._lock = asyncio.Lock()
+        self._lock: Optional[asyncio.Lock] = None if version_info < (3, 10) else asyncio.Lock()
+
+    def _get_lock(self) -> asyncio.Lock:
+        """Get or create the asyncio lock.
+
+        This is lazily initialized to avoid issues with event loop
+        not being available during __init__ in Python 3.9.
+        """
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     async def create_waiter(self, topics: list[str]) -> PollWaiter:
         """Create a new poll waiter for the given topics.
@@ -85,7 +96,7 @@ class PollManager:
         client_id = str(uuid4())
         waiter = PollWaiter(client_id, topics)
 
-        async with self._lock:
+        async with self._get_lock():
             self._waiters[client_id] = waiter
             for topic in topics:
                 self._topic_subscribers[topic].add(client_id)
@@ -100,7 +111,7 @@ class PollManager:
         Args:
             client_id: ID of the waiter to remove
         """
-        async with self._lock:
+        async with self._get_lock():
             waiter = self._waiters.pop(client_id, None)
             if waiter:
                 # Remove from topic subscribers
@@ -123,7 +134,7 @@ class PollManager:
             Number of waiters that received the message
         """
         count = 0
-        async with self._lock:
+        async with self._get_lock():
             client_ids = self._topic_subscribers.get(topic, set()).copy()
 
         for client_id in client_ids:
@@ -163,7 +174,7 @@ class PollManager:
         now = datetime.datetime.now(datetime.timezone.utc)
         stale_ids = []
 
-        async with self._lock:
+        async with self._get_lock():
             for client_id, waiter in self._waiters.items():
                 age = (now - waiter.created_at).total_seconds()
                 if age > max_age_seconds:

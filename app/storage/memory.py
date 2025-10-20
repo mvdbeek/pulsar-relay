@@ -3,6 +3,7 @@
 import asyncio
 from collections import defaultdict, deque
 from datetime import datetime
+from sys import version_info
 from typing import Any, Optional
 
 from app.storage.base import StorageBackend
@@ -18,8 +19,18 @@ class MemoryStorage(StorageBackend):
             max_messages_per_topic: Maximum messages to store per topic
         """
         self._messages: dict[str, deque] = defaultdict(lambda: deque(maxlen=max_messages_per_topic))
-        self._lock = asyncio.Lock()
+        self._lock: Optional[asyncio.Lock] = None if version_info < (3, 10) else asyncio.Lock()
         self._max_messages = max_messages_per_topic
+
+    def _get_lock(self) -> asyncio.Lock:
+        """Get or create the asyncio lock.
+
+        This is lazily initialized to avoid issues with event loop
+        not being available during __init__ in Python 3.9.
+        """
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     async def save_message(
         self,
@@ -30,7 +41,7 @@ class MemoryStorage(StorageBackend):
         metadata: Optional[dict[str, str]] = None,
     ) -> None:
         """Save a message to in-memory storage."""
-        async with self._lock:
+        async with self._get_lock():
             message = {
                 "message_id": message_id,
                 "topic": topic,
@@ -51,7 +62,7 @@ class MemoryStorage(StorageBackend):
         Returns:
             List of messages
         """
-        async with self._lock:
+        async with self._get_lock():
             if topic not in self._messages:
                 return []
 
@@ -73,7 +84,7 @@ class MemoryStorage(StorageBackend):
 
     async def trim_topic(self, topic: str, max_messages: int) -> int:
         """Trim old messages from a topic."""
-        async with self._lock:
+        async with self._get_lock():
             if topic not in self._messages:
                 return 0
 
@@ -92,7 +103,7 @@ class MemoryStorage(StorageBackend):
 
     async def get_topic_length(self, topic: str) -> int:
         """Get the number of messages in a topic."""
-        async with self._lock:
+        async with self._get_lock():
             return len(self._messages.get(topic, []))
 
     async def health_check(self) -> dict:
@@ -105,5 +116,5 @@ class MemoryStorage(StorageBackend):
 
     async def clear(self) -> None:
         """Clear all messages (for testing)."""
-        async with self._lock:
+        async with self._get_lock():
             self._messages.clear()
