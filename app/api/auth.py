@@ -171,3 +171,46 @@ async def get_user_stats(
         return storage.get_stats()
 
     return {"error": "Statistics not available for this storage backend"}
+
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(
+    user_id: str,
+    current_user: User = Depends(require_permission("admin")),
+) -> None:
+    """Delete a user by ID (admin only).
+
+    Args:
+        user_id: User ID to delete
+        current_user: Current authenticated admin user
+
+    Raises:
+        HTTPException: If user cannot be deleted or not found
+    """
+    storage = get_user_storage()
+
+    # Prevent admin from deleting themselves
+    if user_id == current_user.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete your own user account",
+        )
+
+    # Verify user exists before attempting deletion
+    user_to_delete = await storage.get_user_by_id(user_id)
+    if not user_to_delete:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with ID '{user_id}' not found",
+        )
+
+    # Delete the user
+    deleted = await storage.delete_user(user_id)
+
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete user",
+        )
+
+    logger.info(f"Admin {current_user.username} deleted user {user_to_delete.username} ({user_id})")

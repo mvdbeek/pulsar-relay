@@ -337,6 +337,120 @@ class TestAuthenticationEndpoints:
         assert "total_users" in data
         assert data["total_users"] >= 3  # At least the default users
 
+    def test_delete_user_as_admin(self, test_client, auth_storage):
+        """Test deleting a user as admin."""
+        # Login as admin
+        login_response = test_client.post(
+            "/auth/login",
+            data={"username": "admin", "password": "admin1234"},
+        )
+        token = login_response.json()["access_token"]
+
+        # Create a user to delete
+        test_client.post(
+            "/auth/register",
+            json={
+                "username": "todelete",
+                "email": "todelete@example.com",
+                "password": "password123",
+                "permissions": ["read"],
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        # Get the user to get their ID
+        import asyncio
+
+        user = asyncio.run(auth_storage.get_user_by_username("todelete"))
+        assert user is not None
+
+        # Delete the user
+        response = test_client.delete(
+            f"/auth/users/{user.user_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 204
+
+        # Verify user is deleted
+        deleted_user = asyncio.run(auth_storage.get_user_by_id(user.user_id))
+        assert deleted_user is None
+
+    def test_delete_user_without_admin(self, test_client, auth_storage):
+        """Test that non-admin cannot delete users."""
+        # Login as regular user
+        login_response = test_client.post(
+            "/auth/login",
+            data={"username": "user", "password": "user1234"},
+        )
+        token = login_response.json()["access_token"]
+
+        # Get a user ID to try to delete
+        import asyncio
+
+        user = asyncio.run(auth_storage.get_user_by_username("readonly"))
+
+        # Try to delete user
+        response = test_client.delete(
+            f"/auth/users/{user.user_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 403  # Forbidden
+
+    def test_delete_user_without_auth(self, test_client, auth_storage):
+        """Test that deleting users requires authentication."""
+        # Get a user ID to try to delete
+        import asyncio
+
+        user = asyncio.run(auth_storage.get_user_by_username("readonly"))
+
+        # Try to delete without authentication
+        response = test_client.delete(f"/auth/users/{user.user_id}")
+
+        assert response.status_code == 401  # Unauthorized
+
+    def test_admin_cannot_delete_self(self, test_client, auth_storage):
+        """Test that admin cannot delete their own account."""
+        # Login as admin
+        login_response = test_client.post(
+            "/auth/login",
+            data={"username": "admin", "password": "admin1234"},
+        )
+        token = login_response.json()["access_token"]
+
+        # Get admin user ID
+        import asyncio
+
+        admin_user = asyncio.run(auth_storage.get_user_by_username("admin"))
+
+        # Try to delete self
+        response = test_client.delete(
+            f"/auth/users/{admin_user.user_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 400
+        assert "Cannot delete your own user account" in response.json()["detail"]
+
+    def test_delete_nonexistent_user(self, test_client):
+        """Test deleting a non-existent user."""
+        # Login as admin
+        login_response = test_client.post(
+            "/auth/login",
+            data={"username": "admin", "password": "admin1234"},
+        )
+        token = login_response.json()["access_token"]
+
+        # Try to delete non-existent user
+        response = test_client.delete(
+            "/auth/users/nonexistent-user-id",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
 
 class TestProtectedEndpoints:
     """Test that endpoints are properly protected."""
