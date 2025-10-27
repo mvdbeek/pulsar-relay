@@ -41,6 +41,11 @@ class UserStorage(ABC):
         """Delete a user."""
         pass
 
+    @abstractmethod
+    async def list_users(self) -> list[User]:
+        """List all users."""
+        pass
+
     def get_stats(self) -> dict:
         return {}
 
@@ -148,6 +153,14 @@ class InMemoryUserStorage(UserStorage):
             logger.info(f"Deleted user: {user.username} ({user_id})")
             return True
         return False
+
+    async def list_users(self) -> list[User]:
+        """List all users.
+
+        Returns:
+            List of all users
+        """
+        return list(self._users.values())
 
     def get_stats(self) -> dict:
         """Get storage statistics.
@@ -368,6 +381,30 @@ class ValkeyUserStorage(UserStorage):
 
         logger.info(f"Deleted user from Valkey: {user.username} ({user_id})")
         return True
+
+    async def list_users(self) -> list[User]:
+        """List all users.
+
+        Returns:
+            List of all users
+        """
+        username_index_key = self._get_username_index_key()
+
+        # Get all user_ids from the username index
+        user_index = await self._client.hgetall(username_index_key)
+        if not user_index:
+            return []
+
+        # Fetch all users
+        users = []
+        for username_bytes, user_id_bytes in user_index.items():
+            user_id = user_id_bytes.decode("utf-8")
+            user = await self.get_user_by_id(user_id)
+            if user:
+                users.append(user)
+
+        logger.debug(f"Listed {len(users)} users from Valkey")
+        return users
 
     def get_stats(self) -> dict:
         """Get storage statistics.

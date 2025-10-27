@@ -14,6 +14,7 @@ from app.auth.dependencies import (
 from app.auth.jwt import (
     create_access_token,
     get_token_expiration_seconds,
+    hash_password,
     verify_password,
 )
 from app.auth.models import (
@@ -21,6 +22,7 @@ from app.auth.models import (
     User,
     UserCreate,
     UserPublic,
+    UserUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -151,6 +153,103 @@ async def get_current_user_info(
         permissions=current_user.permissions,
         owned_topics=current_user.owned_topics,
     )
+
+
+@router.get("/users", response_model=list[UserPublic])
+async def list_users(
+    current_user: User = Depends(require_permission("admin")),
+) -> list[UserPublic]:
+    """List all users (admin only).
+
+    Args:
+        current_user: Current authenticated admin user
+
+    Returns:
+        List of all users
+    """
+    storage = get_user_storage()
+    users = await storage.list_users()
+
+    # Convert to UserPublic
+    return [
+        UserPublic(
+            user_id=user.user_id,
+            username=user.username,
+            email=user.email,
+            is_active=user.is_active,
+            created_at=user.created_at,
+            permissions=user.permissions,
+            owned_topics=user.owned_topics,
+        )
+        for user in users
+    ]
+
+
+@router.patch("/users/{user_id}", response_model=UserPublic)
+async def update_user(
+    user_id: str,
+    user_update: UserUpdate,
+    current_user: User = Depends(require_permission("admin")),
+) -> UserPublic:
+    """Update a user by ID (admin only).
+
+    Only provided fields will be updated. All fields in the request body are optional.
+
+    Args:
+        user_id: User ID to update
+        user_update: User update data (partial update)
+        current_user: Current authenticated admin user
+
+    Returns:
+        Updated user information
+
+    Raises:
+        HTTPException: If user not found or update fails
+    """
+    storage = get_user_storage()
+
+    # Get the existing user
+    user = await storage.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with ID '{user_id}' not found",
+        )
+
+    # Apply updates (only non-None fields)
+    update_data = user_update.model_dump(exclude_unset=True)
+
+    if "email" in update_data:
+        user.email = update_data["email"]
+
+    if "password" in update_data:
+        user.hashed_password = hash_password(update_data["password"])
+
+    if "permissions" in update_data:
+        user.permissions = update_data["permissions"]
+
+    if "is_active" in update_data:
+        user.is_active = update_data["is_active"]
+
+    # Update the user in storage
+    try:
+        updated_user = await storage.update_user(user)
+        logger.info(f"Admin {current_user.username} updated user {updated_user.username} ({user_id})")
+
+        return UserPublic(
+            user_id=updated_user.user_id,
+            username=updated_user.username,
+            email=updated_user.email,
+            is_active=updated_user.is_active,
+            created_at=updated_user.created_at,
+            permissions=updated_user.permissions,
+            owned_topics=updated_user.owned_topics,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
 
 
 @router.get("/users/stats")

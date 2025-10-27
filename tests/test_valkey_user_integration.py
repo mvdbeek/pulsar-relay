@@ -435,25 +435,27 @@ class TestValkeyUserStorageIntegrationEdgeCases:
         assert retrieved.email == "用户@例え.com"
 
     @pytest.mark.asyncio
-    async def test_large_permissions_list(self, valkey_user_storage):
-        """Test handling large permissions list."""
-        large_permissions = [f"permission_{i}" for i in range(100)]
+    async def test_valid_permissions(self, valkey_user_storage):
+        """Test handling all valid permission types."""
+        # Only admin, read, and write are valid permissions
+        valid_permissions = ["admin", "read", "write"]
 
         user_data = UserCreate(
             username="many_perms",
             email="perms@example.com",
             password="password123",
-            permissions=large_permissions,
+            permissions=valid_permissions,
         )
 
         created_user = await valkey_user_storage.create_user(user_data)
-        assert len(created_user.permissions) == 100
+        assert len(created_user.permissions) == 3
+        assert set(created_user.permissions) == set(valid_permissions)
 
         # Retrieve and verify
         retrieved = await valkey_user_storage.get_user_by_username("many_perms")
         assert retrieved is not None
-        assert len(retrieved.permissions) == 100
-        assert retrieved.permissions == large_permissions
+        assert len(retrieved.permissions) == 3
+        assert set(retrieved.permissions) == set(valid_permissions)
 
 
 class TestValkeyUserStorageIntegrationStats:

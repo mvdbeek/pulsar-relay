@@ -2,6 +2,7 @@
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 from uuid import uuid4
@@ -125,7 +126,7 @@ class TopicStorage(ABC):
 
     @abstractmethod
     async def user_can_access(
-        self, topic_name: str, user_id: str, permission_type: Literal["read", "write"], user_permissions: list[str]
+        self, topic_name: str, user_id: str, permission_type: Literal["read", "write"], user_permissions: Sequence[str]
     ) -> bool:
         """Check if a user can access a topic.
 
@@ -263,7 +264,7 @@ class InMemoryTopicStorage(TopicStorage):
         return True
 
     async def user_can_access(
-        self, topic_name: str, user_id: str, permission_type: Literal["read", "write"], user_permissions: list[str]
+        self, topic_name: str, user_id: str, permission_type: Literal["read", "write"], user_permissions: Sequence[str]
     ) -> bool:
         """Check if a user can access a topic."""
         # Admin can access all topics
@@ -558,7 +559,7 @@ class ValkeyTopicStorage(TopicStorage):
         return True
 
     async def user_can_access(
-        self, topic_name: str, user_id: str, permission_type: Literal["read", "write"], user_permissions: list[str]
+        self, topic_name: str, user_id: str, permission_type: Literal["read", "write"], user_permissions: Sequence[str]
     ) -> bool:
         """Check if a user can access a topic."""
         # Admin can access all topics

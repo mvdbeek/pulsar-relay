@@ -1,11 +1,13 @@
 """Tests for authentication functionality."""
 
+import asyncio
 from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.auth.dependencies import set_user_storage
+from app.api import messages
+from app.auth.dependencies import set_topic_storage, set_user_storage
 from app.auth.jwt import (
     create_access_token,
     decode_token,
@@ -14,17 +16,15 @@ from app.auth.jwt import (
 )
 from app.auth.models import UserCreate
 from app.auth.storage import InMemoryUserStorage
+from app.auth.topic_storage import InMemoryTopicStorage
+from app.core.polling import PollManager
 from app.main import app
+from app.storage.memory import MemoryStorage
 
 
 @pytest.fixture
 def test_client(auth_storage):
     """Create a test client with auth storage."""
-    from app.api import messages
-    from app.auth.dependencies import set_topic_storage
-    from app.auth.topic_storage import InMemoryTopicStorage
-    from app.core.polling import PollManager
-    from app.storage.memory import MemoryStorage
 
     msg_storage = MemoryStorage()
     poll_manager = PollManager()
@@ -359,8 +359,6 @@ class TestAuthenticationEndpoints:
         )
 
         # Get the user to get their ID
-        import asyncio
-
         user = asyncio.run(auth_storage.get_user_by_username("todelete"))
         assert user is not None
 
@@ -386,8 +384,6 @@ class TestAuthenticationEndpoints:
         token = login_response.json()["access_token"]
 
         # Get a user ID to try to delete
-        import asyncio
-
         user = asyncio.run(auth_storage.get_user_by_username("readonly"))
 
         # Try to delete user
@@ -401,8 +397,6 @@ class TestAuthenticationEndpoints:
     def test_delete_user_without_auth(self, test_client, auth_storage):
         """Test that deleting users requires authentication."""
         # Get a user ID to try to delete
-        import asyncio
-
         user = asyncio.run(auth_storage.get_user_by_username("readonly"))
 
         # Try to delete without authentication
@@ -420,8 +414,6 @@ class TestAuthenticationEndpoints:
         token = login_response.json()["access_token"]
 
         # Get admin user ID
-        import asyncio
-
         admin_user = asyncio.run(auth_storage.get_user_by_username("admin"))
 
         # Try to delete self
@@ -450,6 +442,292 @@ class TestAuthenticationEndpoints:
 
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
+
+    def test_list_users_as_admin(self, test_client):
+        """Test listing all users as admin."""
+        # Login as admin
+        login_response = test_client.post(
+            "/auth/login",
+            data={"username": "admin", "password": "admin1234"},
+        )
+        token = login_response.json()["access_token"]
+
+        # List users
+        response = test_client.get(
+            "/auth/users",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+        assert len(data) >= 3  # At least admin, user, readonly
+
+        # Check that user data is returned correctly
+        usernames = [user["username"] for user in data]
+        assert "admin" in usernames
+        assert "user" in usernames
+        assert "readonly" in usernames
+
+        # Verify UserPublic fields are present and sensitive data is not exposed
+        for user in data:
+            assert "user_id" in user
+            assert "username" in user
+            assert "email" in user
+            assert "is_active" in user
+            assert "created_at" in user
+            assert "permissions" in user
+            assert "owned_topics" in user
+            # Ensure hashed_password is not exposed
+            assert "hashed_password" not in user
+
+    def test_list_users_without_admin(self, test_client):
+        """Test that non-admin cannot list users."""
+        # Login as regular user
+        login_response = test_client.post(
+            "/auth/login",
+            data={"username": "user", "password": "user1234"},
+        )
+        token = login_response.json()["access_token"]
+
+        # Try to list users
+        response = test_client.get(
+            "/auth/users",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 403  # Forbidden
+
+    def test_list_users_without_auth(self, test_client):
+        """Test that listing users requires authentication."""
+        # Try to list users without authentication
+        response = test_client.get("/auth/users")
+
+        assert response.status_code == 401  # Unauthorized
+
+    def test_update_user_email_as_admin(self, test_client, auth_storage):
+        """Test updating user email as admin."""
+        # Login as admin
+        login_response = test_client.post(
+            "/auth/login",
+            data={"username": "admin", "password": "admin1234"},
+        )
+        token = login_response.json()["access_token"]
+
+        # Get user to update
+        user = asyncio.run(auth_storage.get_user_by_username("user"))
+
+        # Update email
+        response = test_client.patch(
+            f"/auth/users/{user.user_id}",
+            json={"email": "newemail@example.com"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["email"] == "newemail@example.com"
+        assert data["username"] == "user"  # Username unchanged
+
+        # Verify update persisted
+        updated_user = asyncio.run(auth_storage.get_user_by_id(user.user_id))
+        assert updated_user.email == "newemail@example.com"
+
+    def test_update_user_password_as_admin(self, test_client, auth_storage):
+        """Test updating user password as admin."""
+        # Login as admin
+        login_response = test_client.post(
+            "/auth/login",
+            data={"username": "admin", "password": "admin1234"},
+        )
+        token = login_response.json()["access_token"]
+
+        # Get user to update
+        user = asyncio.run(auth_storage.get_user_by_username("user"))
+        old_password_hash = user.hashed_password
+
+        # Update password
+        response = test_client.patch(
+            f"/auth/users/{user.user_id}",
+            json={"password": "newpassword123"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 200
+
+        # Verify password was changed
+        updated_user = asyncio.run(auth_storage.get_user_by_id(user.user_id))
+        assert updated_user.hashed_password != old_password_hash
+
+        # Verify can login with new password
+        login_response = test_client.post(
+            "/auth/login",
+            data={"username": "user", "password": "newpassword123"},
+        )
+        assert login_response.status_code == 200
+
+    def test_update_user_permissions_as_admin(self, test_client, auth_storage):
+        """Test updating user permissions as admin."""
+        # Login as admin
+        login_response = test_client.post(
+            "/auth/login",
+            data={"username": "admin", "password": "admin1234"},
+        )
+        token = login_response.json()["access_token"]
+
+        # Get user to update
+        user = asyncio.run(auth_storage.get_user_by_username("readonly"))
+
+        # Update permissions
+        response = test_client.patch(
+            f"/auth/users/{user.user_id}",
+            json={"permissions": ["read", "write", "admin"]},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert set(data["permissions"]) == {"read", "write", "admin"}
+
+        # Verify update persisted
+        updated_user = asyncio.run(auth_storage.get_user_by_id(user.user_id))
+        assert set(updated_user.permissions) == {"read", "write", "admin"}
+
+    def test_update_user_is_active_as_admin(self, test_client, auth_storage):
+        """Test deactivating/activating user as admin."""
+        # Login as admin
+        login_response = test_client.post(
+            "/auth/login",
+            data={"username": "admin", "password": "admin1234"},
+        )
+        token = login_response.json()["access_token"]
+
+        # Get user to update
+        user = asyncio.run(auth_storage.get_user_by_username("user"))
+
+        # Deactivate user
+        response = test_client.patch(
+            f"/auth/users/{user.user_id}",
+            json={"is_active": False},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["is_active"] is False
+
+        # Verify user cannot login
+        login_response = test_client.post(
+            "/auth/login",
+            data={"username": "user", "password": "user1234"},
+        )
+        assert login_response.status_code == 403
+
+    def test_update_user_multiple_fields_as_admin(self, test_client, auth_storage):
+        """Test updating multiple fields at once as admin."""
+        # Login as admin
+        login_response = test_client.post(
+            "/auth/login",
+            data={"username": "admin", "password": "admin1234"},
+        )
+        token = login_response.json()["access_token"]
+
+        # Get user to update
+        user = asyncio.run(auth_storage.get_user_by_username("user"))
+
+        # Update multiple fields
+        response = test_client.patch(
+            f"/auth/users/{user.user_id}",
+            json={
+                "email": "updated@example.com",
+                "permissions": ["read"],
+                "is_active": True,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["email"] == "updated@example.com"
+        assert data["permissions"] == ["read"]
+        assert data["is_active"] is True
+
+    def test_update_user_without_admin(self, test_client, auth_storage):
+        """Test that non-admin cannot update users."""
+        # Login as regular user
+        login_response = test_client.post(
+            "/auth/login",
+            data={"username": "user", "password": "user1234"},
+        )
+        token = login_response.json()["access_token"]
+
+        # Get a user ID to try to update
+        user = asyncio.run(auth_storage.get_user_by_username("readonly"))
+
+        # Try to update user
+        response = test_client.patch(
+            f"/auth/users/{user.user_id}",
+            json={"email": "hacked@example.com"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 403  # Forbidden
+
+    def test_update_user_without_auth(self, test_client, auth_storage):
+        """Test that updating users requires authentication."""
+        # Get a user ID to try to update
+        user = asyncio.run(auth_storage.get_user_by_username("user"))
+
+        # Try to update without authentication
+        response = test_client.patch(
+            f"/auth/users/{user.user_id}",
+            json={"email": "hacked@example.com"},
+        )
+
+        assert response.status_code == 401  # Unauthorized
+
+    def test_update_nonexistent_user(self, test_client):
+        """Test updating a non-existent user."""
+        # Login as admin
+        login_response = test_client.post(
+            "/auth/login",
+            data={"username": "admin", "password": "admin1234"},
+        )
+        token = login_response.json()["access_token"]
+
+        # Try to update non-existent user
+        response = test_client.patch(
+            "/auth/users/nonexistent-user-id",
+            json={"email": "test@example.com"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_update_user_empty_update(self, test_client, auth_storage):
+        """Test updating user with no fields (should succeed but not change anything)."""
+        # Login as admin
+        login_response = test_client.post(
+            "/auth/login",
+            data={"username": "admin", "password": "admin1234"},
+        )
+        token = login_response.json()["access_token"]
+
+        # Get user to update
+        user = asyncio.run(auth_storage.get_user_by_username("user"))
+        original_email = user.email
+
+        # Update with empty body
+        response = test_client.patch(
+            f"/auth/users/{user.user_id}",
+            json={},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["email"] == original_email  # Unchanged
 
 
 class TestProtectedEndpoints:

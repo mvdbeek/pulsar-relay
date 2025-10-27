@@ -1,9 +1,12 @@
 """Authentication models and schemas."""
 
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
+
+# Define valid permission values
+Permission = Literal["admin", "read", "write"]
 
 
 class User(BaseModel):
@@ -15,7 +18,7 @@ class User(BaseModel):
     hashed_password: str = Field(..., description="Hashed password")
     is_active: bool = Field(default=True, description="Whether user is active")
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    permissions: list[str] = Field(default_factory=list, description="User permissions")
+    permissions: list[Permission] = Field(default_factory=list, description="User permissions (admin, read, write)")
     owned_topics: list[str] = Field(default_factory=list, description="Topics owned by this user")
 
 
@@ -25,7 +28,19 @@ class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     email: Optional[str] = Field(None)
     password: str = Field(..., min_length=8)
-    permissions: list[str] = Field(default_factory=list)
+    permissions: list[Permission] = Field(default_factory=list, description="User permissions (admin, read, write)")
+
+
+class UserUpdate(BaseModel):
+    """User update request (partial update).
+
+    All fields are optional. Only provided fields will be updated.
+    """
+
+    email: Optional[str] = Field(None, description="User email")
+    password: Optional[str] = Field(None, min_length=8, description="New password (will be hashed)")
+    permissions: Optional[list[Permission]] = Field(None, description="User permissions (admin, read, write)")
+    is_active: Optional[bool] = Field(None, description="Whether user is active")
 
 
 class UserPublic(BaseModel):
@@ -36,7 +51,7 @@ class UserPublic(BaseModel):
     email: Optional[str]
     is_active: bool
     created_at: datetime
-    permissions: list[str]
+    permissions: list[Permission]
     owned_topics: list[str]
 
 
@@ -64,7 +79,7 @@ class TokenPayload(BaseModel):
 
     sub: str = Field(..., description="Subject (user_id)")
     username: str = Field(..., description="Username")
-    permissions: list[str] = Field(default_factory=list)
+    permissions: list[Permission] = Field(default_factory=list)
     exp: int = Field(..., description="Expiration timestamp")
     iat: int = Field(..., description="Issued at timestamp")
 
