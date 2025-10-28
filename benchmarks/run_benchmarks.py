@@ -13,6 +13,36 @@ import websockets
 # Configuration
 BASE_URL = "http://localhost:8080"
 WS_URL = "ws://localhost:8080/ws"
+USERNAME = "admin"
+PASSWORD = "12345678"
+
+# Global variable to store the JWT token
+_access_token: str | None = None
+
+
+async def login_and_get_token() -> str:
+    """Login and get JWT access token."""
+    global _access_token
+
+    if _access_token:
+        return _access_token
+
+    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+        response = await client.post(
+            "/auth/login",
+            data={"username": USERNAME, "password": PASSWORD},
+        )
+        response.raise_for_status()
+        token_data = response.json()
+        _access_token = token_data["access_token"]
+        return _access_token
+
+
+def get_auth_headers() -> dict[str, str]:
+    """Get authorization headers with Bearer token."""
+    if not _access_token:
+        raise RuntimeError("No access token available. Call login_and_get_token() first.")
+    return {"Authorization": f"Bearer {_access_token}"}
 
 
 @dataclass
@@ -74,7 +104,7 @@ class BenchmarkRunner:
         latencies = []
         errors = 0
 
-        async with httpx.AsyncClient(base_url=self.base_url) as client:
+        async with httpx.AsyncClient(base_url=self.base_url, headers=get_auth_headers()) as client:
             start_time = time.time()
 
             for i in range(num_messages):
@@ -113,7 +143,7 @@ class BenchmarkRunner:
         latencies = []
         errors = 0
 
-        async with httpx.AsyncClient(base_url=self.base_url) as client:
+        async with httpx.AsyncClient(base_url=self.base_url, headers=get_auth_headers()) as client:
             start_time = time.time()
 
             for batch_idx in range(num_batches):
@@ -172,7 +202,7 @@ class BenchmarkRunner:
             except Exception as e:
                 return None, str(e)
 
-        async with httpx.AsyncClient(base_url=self.base_url) as client:
+        async with httpx.AsyncClient(base_url=self.base_url, headers=get_auth_headers()) as client:
             start_time = time.time()
 
             # Send messages in batches with concurrency limit
@@ -183,7 +213,7 @@ class BenchmarkRunner:
                 for latency, error in results:
                     if error:
                         errors += 1
-                    else:
+                    elif latency is not None:
                         latencies.append(latency)
 
             duration = time.time() - start_time
@@ -208,7 +238,8 @@ class BenchmarkRunner:
         async def connect_and_subscribe(client_id: int):
             ws_start = time.time()
             try:
-                async with websockets.connect(self.ws_url) as websocket:
+                ws_url_with_token = f"{self.ws_url}?token={_access_token}"
+                async with websockets.connect(ws_url_with_token) as websocket:
                     # Subscribe
                     await websocket.send(
                         json.dumps(
@@ -266,7 +297,8 @@ class BenchmarkRunner:
             nonlocal received_count, errors
 
             try:
-                async with websockets.connect(self.ws_url) as websocket:
+                ws_url_with_token = f"{self.ws_url}?token={_access_token}"
+                async with websockets.connect(ws_url_with_token) as websocket:
                     # Subscribe
                     await websocket.send(
                         json.dumps(
@@ -303,7 +335,7 @@ class BenchmarkRunner:
 
         async def message_producer(topic: str, num_messages: int):
             """Producer that sends messages to a topic."""
-            async with httpx.AsyncClient(base_url=self.base_url) as client:
+            async with httpx.AsyncClient(base_url=self.base_url, headers=get_auth_headers()) as client:
                 # Small delay to let consumers connect
                 await asyncio.sleep(0.5)
 
@@ -368,7 +400,8 @@ class BenchmarkRunner:
 
             received = 0
             try:
-                async with websockets.connect(self.ws_url) as websocket:
+                ws_url_with_token = f"{self.ws_url}?token={_access_token}"
+                async with websockets.connect(ws_url_with_token) as websocket:
                     # Subscribe
                     await websocket.send(
                         json.dumps(
@@ -414,7 +447,7 @@ class BenchmarkRunner:
         start_time = time.time()
 
         # Send messages while subscribers are listening
-        async with httpx.AsyncClient(base_url=self.base_url) as client:
+        async with httpx.AsyncClient(base_url=self.base_url, headers=get_auth_headers()) as client:
             send_tasks = []
             for i in range(num_messages):
                 send_tasks.append(
@@ -449,14 +482,14 @@ class BenchmarkRunner:
 
         return result
 
-    async def benchmark_long_polling_basic(self, num_requests: int = 100) -> BenchmarkResult:
+    async def benchmark_long_polling_basic(self, num_requests: int = 10) -> BenchmarkResult:
         """Benchmark basic long polling request/response latency."""
         print(f"\n📊 Running: Long Polling Basic ({num_requests} requests)")
 
         latencies = []
         errors = 0
 
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=35.0) as client:
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=35.0, headers=get_auth_headers()) as client:
             start_time = time.time()
 
             for i in range(num_requests):
@@ -505,7 +538,9 @@ class BenchmarkRunner:
             messages_received = 0
 
             try:
-                async with httpx.AsyncClient(base_url=self.base_url, timeout=35.0) as client:
+                async with httpx.AsyncClient(
+                    base_url=self.base_url, timeout=35.0, headers=get_auth_headers()
+                ) as client:
                     while messages_received < expected_messages:
                         try:
                             response = await client.post(
@@ -544,7 +579,7 @@ class BenchmarkRunner:
 
         async def message_producer(topic: str, num_messages: int):
             """Producer that sends messages."""
-            async with httpx.AsyncClient(base_url=self.base_url) as client:
+            async with httpx.AsyncClient(base_url=self.base_url, headers=get_auth_headers()) as client:
                 # Small delay to let consumers start polling
                 await asyncio.sleep(0.5)
 
@@ -602,7 +637,9 @@ class BenchmarkRunner:
             """Single polling client."""
             poll_start = time.time()
             try:
-                async with httpx.AsyncClient(base_url=self.base_url, timeout=timeout + 5.0) as client:
+                async with httpx.AsyncClient(
+                    base_url=self.base_url, timeout=timeout + 5.0, headers=get_auth_headers()
+                ) as client:
                     response = await client.post(
                         "/messages/poll",
                         json={
@@ -653,7 +690,8 @@ class BenchmarkRunner:
         async def websocket_receiver():
             nonlocal ws_received, ws_errors
             try:
-                async with websockets.connect(self.ws_url) as websocket:
+                ws_url_with_token = f"{self.ws_url}?token={_access_token}"
+                async with websockets.connect(ws_url_with_token) as websocket:
                     await websocket.send(
                         json.dumps(
                             {
@@ -690,7 +728,9 @@ class BenchmarkRunner:
             nonlocal poll_received, poll_errors
             last_id = {}
             try:
-                async with httpx.AsyncClient(base_url=self.base_url, timeout=35.0) as client:
+                async with httpx.AsyncClient(
+                    base_url=self.base_url, timeout=35.0, headers=get_auth_headers()
+                ) as client:
                     while poll_received < num_messages:
                         try:
                             response = await client.post(
@@ -720,7 +760,7 @@ class BenchmarkRunner:
         # Producers
         async def ws_producer():
             await asyncio.sleep(0.5)
-            async with httpx.AsyncClient(base_url=self.base_url) as client:
+            async with httpx.AsyncClient(base_url=self.base_url, headers=get_auth_headers()) as client:
                 for i in range(num_messages):
                     await client.post(
                         "/api/v1/messages",
@@ -733,7 +773,7 @@ class BenchmarkRunner:
 
         async def poll_producer():
             await asyncio.sleep(0.5)
-            async with httpx.AsyncClient(base_url=self.base_url) as client:
+            async with httpx.AsyncClient(base_url=self.base_url, headers=get_auth_headers()) as client:
                 for i in range(num_messages):
                     await client.post(
                         "/api/v1/messages",
@@ -818,9 +858,18 @@ class BenchmarkRunner:
         print(f"WebSocket URL: {self.ws_url}")
         print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
+        # Login and get JWT token
+        try:
+            print("\n🔐 Authenticating...")
+            await login_and_get_token()
+            print("✅ Authentication successful")
+        except Exception as e:
+            print(f"❌ Authentication failed: {e}")
+            return
+
         # Check if server is running
         try:
-            async with httpx.AsyncClient(base_url=self.base_url) as client:
+            async with httpx.AsyncClient(base_url=self.base_url, headers=get_auth_headers()) as client:
                 response = await client.get("/health")
                 response.raise_for_status()
                 print("✅ Server is healthy and ready")
@@ -852,7 +901,7 @@ class BenchmarkRunner:
             self.print_result(self.results[-1])
 
             # Long polling benchmarks
-            await self.benchmark_long_polling_basic(num_requests=100)
+            await self.benchmark_long_polling_basic(num_requests=10)
             self.print_result(self.results[-1])
 
             await self.benchmark_long_polling_concurrent(num_clients=20, timeout=2)
