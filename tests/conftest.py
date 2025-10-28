@@ -12,12 +12,48 @@ from fastapi.testclient import TestClient
 from app.api import messages, websocket
 from app.auth.dependencies import set_topic_storage, set_user_storage
 from app.auth.jwt import create_access_token
-from app.auth.storage import InMemoryUserStorage, create_default_users
+from app.auth.models import UserCreate
+from app.auth.storage import InMemoryUserStorage, UserStorage
 from app.auth.topic_storage import InMemoryTopicStorage
 from app.core.connections import ConnectionManager
 from app.core.polling import PollManager
 from app.main import app
 from app.storage.memory import MemoryStorage
+
+
+async def create_default_users(storage: UserStorage) -> None:
+    """Create default users for testing/development.
+
+    Args:
+        storage: User storage backend
+    """
+    default_users = [
+        UserCreate(
+            username="admin",
+            email="admin@example.com",
+            password="admin1234",
+            permissions=["admin", "read", "write"],
+        ),
+        UserCreate(
+            username="user",
+            email="user@example.com",
+            password="user1234",
+            permissions=["read", "write"],
+        ),
+        UserCreate(
+            username="readonly",
+            email="readonly@example.com",
+            password="readonly123",
+            permissions=["read"],
+        ),
+    ]
+
+    for user_data in default_users:
+        try:
+            user = await storage.create_user(user_data)
+            print(f"Created default user: {user.username} with permissions {user.permissions}")
+        except ValueError as e:
+            print(f"Default user already exists: {e}")
 
 
 @pytest.fixture

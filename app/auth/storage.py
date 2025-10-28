@@ -418,38 +418,3 @@ class ValkeyUserStorage(UserStorage):
             "storage_type": "valkey",
             "message": "Stats require scanning all keys (expensive operation)",
         }
-
-
-async def create_default_users(storage: UserStorage) -> None:
-    """Create default users for testing/development.
-
-    Args:
-        storage: User storage backend
-    """
-    default_users = [
-        UserCreate(
-            username="admin",
-            email="admin@example.com",
-            password="admin1234",
-            permissions=["admin", "read", "write"],
-        ),
-        UserCreate(
-            username="user",
-            email="user@example.com",
-            password="user1234",
-            permissions=["read", "write"],
-        ),
-        UserCreate(
-            username="readonly",
-            email="readonly@example.com",
-            password="readonly123",
-            permissions=["read"],
-        ),
-    ]
-
-    for user_data in default_users:
-        try:
-            user = await storage.create_user(user_data)
-            logger.info(f"Created default user: {user.username} with permissions {user.permissions}")
-        except ValueError as e:
-            logger.debug(f"Default user already exists: {e}")
