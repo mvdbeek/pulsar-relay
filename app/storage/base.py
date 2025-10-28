@@ -11,13 +11,18 @@ class StorageBackend(ABC):
     @abstractmethod
     async def save_message(
         self,
-        message_id: str,
         topic: str,
         payload: dict[str, Any],
         timestamp: datetime,
         metadata: Optional[dict[str, str]] = None,
-    ) -> None:
-        """Save a message to storage."""
+    ) -> str:
+        """Save a message to storage.
+
+        Returns:
+            The message ID assigned by the storage backend.
+            For Valkey, this is the stream ID.
+            For in-memory storage, this is a generated UUID.
+        """
         pass
 
     @abstractmethod

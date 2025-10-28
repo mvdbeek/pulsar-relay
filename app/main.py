@@ -12,6 +12,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api import auth, health, messages, polling, topics, websocket
 from app.auth.dependencies import set_topic_storage, set_user_storage
+from app.auth.jwt import hash_password
 from app.auth.models import UserCreate
 from app.auth.storage import InMemoryUserStorage, UserStorage, ValkeyUserStorage
 from app.auth.topic_storage import InMemoryTopicStorage, TopicStorage, ValkeyTopicStorage
@@ -112,6 +113,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 log.info(f"✅ Bootstrap admin created: {admin_user.username}")
             else:
                 log.info(f"Bootstrap admin already exists: {settings.bootstrap_admin_username}")
+                hashed_password = hash_password(settings.bootstrap_admin_password)
+                if hashed_password != existing_admin.hashed_password:
+                    existing_admin.hashed_password = hashed_password
+                    await user_storage.update_user(existing_admin)
         except Exception as e:
             log.error(f"Failed to create bootstrap admin: {e}")
 

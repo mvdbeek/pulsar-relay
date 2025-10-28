@@ -1,6 +1,7 @@
 """In-memory storage backend for testing and hot-tier caching."""
 
 import asyncio
+import uuid
 from collections import defaultdict, deque
 from datetime import datetime
 from sys import version_info
@@ -34,13 +35,19 @@ class MemoryStorage(StorageBackend):
 
     async def save_message(
         self,
-        message_id: str,
         topic: str,
         payload: dict[str, Any],
         timestamp: datetime,
         metadata: Optional[dict[str, str]] = None,
-    ) -> None:
-        """Save a message to in-memory storage."""
+    ) -> str:
+        """Save a message to in-memory storage.
+
+        Returns:
+            Generated message ID (UUID-based)
+        """
+        # Generate a UUID-based message ID
+        message_id = f"msg_{uuid.uuid4().hex[:12]}"
+
         async with self._get_lock():
             message = {
                 "message_id": message_id,
@@ -50,6 +57,8 @@ class MemoryStorage(StorageBackend):
                 "metadata": metadata or {},
             }
             self._messages[topic].append(message)
+
+        return message_id
 
     async def get_messages(self, topic: str, since: Optional[str] = None, limit: int = 10) -> list[dict[str, Any]]:
         """Get messages from a topic.

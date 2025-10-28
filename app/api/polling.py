@@ -94,56 +94,50 @@ async def long_poll(
 
     messages = []
 
-    try:
-        # First, check for any recent messages the client hasn't seen
-        if poll_request.since:
-            # Client wants to catch up on messages
-            for topic in poll_request.topics:
-                since_id = poll_request.since.get(topic)
-                try:
-                    recent_messages = await storage.get_messages(topic, since=since_id, limit=100)
-                    for msg in recent_messages:
-                        messages.append(
-                            {
-                                "topic": topic,
-                                "message_id": msg["message_id"],
-                                "payload": msg["payload"],
-                                "timestamp": msg["timestamp"],
-                                "metadata": msg.get("metadata", {}),
-                                "stream_id": msg.get("stream_id"),
-                            }
-                        )
-                except Exception as e:
-                    logger.error(f"Error fetching messages for topic {topic}: {e}")
+    # First, check for any recent messages the client hasn't seen
+    if poll_request.since:
+        # Client wants to catch up on messages
+        # The message IDs in `since` are now the same as the storage IDs (stream IDs for Valkey)
+        for topic in poll_request.topics:
+            # Get the last message ID the client saw for this topic
+            since_message_id = poll_request.since.get(topic)
+            recent_messages = await storage.get_messages(topic, since=since_message_id, limit=100)
+            for msg in recent_messages:
+                messages.append(
+                    {
+                        "topic": topic,
+                        "message_id": msg["message_id"],
+                        "payload": msg["payload"],
+                        "timestamp": msg["timestamp"],
+                        "metadata": msg.get("metadata", {}),
+                        "stream_id": msg.get("stream_id"),
+                    }
+                )
 
         # If we already have messages, return immediately
         if messages:
             logger.debug(f"Returning {len(messages)} cached messages immediately")
             return PollResponse(messages=messages, has_more=len(messages) >= 100)
 
-        # No cached messages, create waiter for new messages
-        waiter = await poll_manager.create_waiter(poll_request.topics)
+    # No cached messages, create waiter for new messages
+    waiter = await poll_manager.create_waiter(poll_request.topics)
 
-        try:
-            # Wait for new messages with timeout
-            logger.debug(
-                f"Waiting for new messages on topics {poll_request.topics} " f"with timeout {poll_request.timeout}s"
-            )
-            new_messages = await waiter.wait_for_messages(timeout=float(poll_request.timeout))
+    try:
+        # Wait for new messages with timeout
+        logger.debug(
+            f"Waiting for new messages on topics {poll_request.topics} " f"with timeout {poll_request.timeout}s"
+        )
+        new_messages = await waiter.wait_for_messages(timeout=float(poll_request.timeout))
 
-            if new_messages:
-                logger.info(f"Returning {len(new_messages)} new messages to poll client")
-                messages.extend(new_messages)
+        if new_messages:
+            logger.info(f"Returning {len(new_messages)} new messages to poll client")
+            messages.extend(new_messages)
 
-        finally:
-            # Always clean up the waiter
-            await poll_manager.remove_waiter(waiter.client_id)
+    finally:
+        # Always clean up the waiter
+        await poll_manager.remove_waiter(waiter.client_id)
 
-        return PollResponse(messages=messages, has_more=False)
-
-    except Exception as e:
-        logger.error(f"Error in long polling: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    return PollResponse(messages=messages, has_more=False)
 
 
 @router.get("/poll/stats")

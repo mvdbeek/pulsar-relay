@@ -35,13 +35,15 @@ class TestValkeyStorage:
         valkey_storage._client.xadd = AsyncMock(return_value=b"1234567890123-0")
         valkey_storage._client.xtrim = AsyncMock()
 
-        await valkey_storage.save_message(
-            message_id="msg_123",
+        message_id = await valkey_storage.save_message(
             topic="test-topic",
             payload={"data": "value"},
             timestamp=datetime(2025, 1, 1, 12, 0, 0),
             metadata={"source": "test"},
         )
+
+        # Verify that the stream ID is returned as message ID
+        assert message_id == "1234567890123-0"
 
         # Verify xadd was called with correct parameters
         valkey_storage._client.xadd.assert_called_once()
@@ -50,7 +52,8 @@ class TestValkeyStorage:
         # xadd receives list of tuples: [(field, value), ...]
         fields_list = call_args[0][1]
         fields = dict(fields_list)  # Convert to dict for easy verification
-        assert fields["message_id"] == "msg_123"
+        # message_id field should no longer be stored
+        assert "message_id" not in fields
         assert json.loads(fields["payload"]) == {"data": "value"}
         assert json.loads(fields["metadata"]) == {"source": "test"}
 
@@ -63,12 +66,14 @@ class TestValkeyStorage:
         valkey_storage._client.xadd = AsyncMock(return_value=b"1234567890123-0")
         valkey_storage._client.xtrim = AsyncMock()
 
-        await valkey_storage.save_message(
-            message_id="msg_456",
+        message_id = await valkey_storage.save_message(
             topic="test-topic",
             payload={"data": "value"},
             timestamp=datetime(2025, 1, 1, 12, 0, 0),
         )
+
+        # Verify the stream ID is returned
+        assert message_id == "1234567890123-0"
 
         # Verify metadata field is not included when None
         call_args = valkey_storage._client.xadd.call_args
@@ -81,16 +86,15 @@ class TestValkeyStorage:
         """Test retrieving messages from Valkey stream."""
         # Mock xrange to return stream entries in GLIDE format
         # Returns: Mapping[bytes, List[List[bytes]]] where each inner list is [field, value]
+        # Note: message_id field is no longer stored - stream ID is the message ID
         valkey_storage._client.xrange = AsyncMock(
             return_value={
                 b"1234567890123-0": [
-                    [b"message_id", b"msg_1"],
                     [b"payload", json.dumps({"index": 1}).encode()],
                     [b"timestamp", b"2025-01-01T12:00:00"],
                     [b"metadata", json.dumps({"source": "test"}).encode()],
                 ],
                 b"1234567890124-0": [
-                    [b"message_id", b"msg_2"],
                     [b"payload", json.dumps({"index": 2}).encode()],
                     [b"timestamp", b"2025-01-01T12:00:01"],
                 ],
@@ -100,12 +104,13 @@ class TestValkeyStorage:
         messages = await valkey_storage.get_messages("test-topic", limit=10)
 
         assert len(messages) == 2
-        assert messages[0]["message_id"] == "msg_1"
+        # Stream ID is now the message ID
+        assert messages[0]["message_id"] == "1234567890123-0"
         assert messages[0]["payload"] == {"index": 1}
         assert messages[0]["metadata"] == {"source": "test"}
         assert messages[0]["stream_id"] == "1234567890123-0"
 
-        assert messages[1]["message_id"] == "msg_2"
+        assert messages[1]["message_id"] == "1234567890124-0"
         assert messages[1]["payload"] == {"index": 2}
         assert messages[1]["metadata"] == {}
 
@@ -240,7 +245,7 @@ class TestValkeyStorage:
         storage = ValkeyStorage()
 
         with pytest.raises(RuntimeError, match="Not connected to Valkey"):
-            await storage.save_message("msg", "topic", {}, datetime.now())
+            await storage.save_message("topic", {}, datetime.now())
 
         with pytest.raises(RuntimeError, match="Not connected to Valkey"):
             await storage.get_messages("topic")
@@ -305,17 +310,19 @@ async def test_valkey_integration():
 
         # Test save and retrieve
         timestamp = datetime(2025, 1, 1, 12, 0, 0)
-        await storage.save_message(
-            message_id="msg_integration_1",
+        message_id = await storage.save_message(
             topic="integration-test",
             payload={"test": "data"},
             timestamp=timestamp,
             metadata={"source": "integration"},
         )
 
+        # message_id should be a stream ID (format: timestamp-sequence)
+        assert "-" in message_id
+
         messages = await storage.get_messages("integration-test")
         assert len(messages) >= 1
-        assert messages[0]["message_id"] == "msg_integration_1"
+        assert messages[0]["message_id"] == message_id
         assert messages[0]["payload"] == {"test": "data"}
 
         # Test topic length

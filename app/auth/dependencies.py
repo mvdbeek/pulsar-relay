@@ -118,15 +118,26 @@ async def get_current_user(
     Raises:
         HTTPException: If user not found or inactive
     """
-    storage = get_user_storage()
-    user = await storage.get_user_by_id(token_payload.sub)
+    from app.core.cache import user_cache
+
+    # Check cache first to reduce database load during high concurrency
+    cache_key = f"user:{token_payload.sub}"
+    user = user_cache.get(cache_key)
 
     if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        # Cache miss - fetch from storage
+        storage = get_user_storage()
+        user = await storage.get_user_by_id(token_payload.sub)
+
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Cache the user for future requests
+        user_cache.set(cache_key, user)
 
     if not user.is_active:
         raise HTTPException(
@@ -268,6 +279,9 @@ def require_topic_access(topic: str, permission_type: Literal["read", "write"]):
 async def get_or_create_topic(topic_name: str, current_user: User):
     """Get or create a topic, setting the current user as owner.
 
+    This function handles concurrent creation attempts gracefully by retrying
+    the get operation if the create fails due to the topic already existing.
+
     Args:
         topic_name: Topic name
         current_user: Current user
@@ -288,7 +302,7 @@ async def get_or_create_topic(topic_name: str, current_user: User):
     if topic:
         return topic
 
-    # Topic doesn't exist - create it with current user as owner
+    # Topic doesn't exist - try to create it with current user as owner
     try:
         topic_data = TopicCreate(
             topic_name=topic_name,
@@ -305,6 +319,19 @@ async def get_or_create_topic(topic_name: str, current_user: User):
             await user_storage.update_user(current_user)
 
         return topic
+    except ValueError as e:
+        # Topic was created by another concurrent request - retry the get
+        if "already exists" in str(e):
+            logger.debug(f"Topic '{topic_name}' was created by concurrent request, retrying get")
+            topic = await topic_storage.get_topic(topic_name)
+            if topic:
+                return topic
+        # Still couldn't get it, raise the error
+        logger.exception(f"Failed to get or create topic '{topic_name}': {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get or create topic: {str(e)}",
+        )
     except Exception as e:
         logger.exception(f"Failed to create topic '{topic_name}': {e}")
         raise HTTPException(

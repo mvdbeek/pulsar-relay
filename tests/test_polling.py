@@ -303,23 +303,19 @@ class TestPollingEndpoint:
     async def test_poll_with_since_parameter(self, test_storage, test_client, auth_token):
         """Test polling with since parameter for pagination."""
 
-        # Save multiple messages
-        await test_storage.save_message(
-            "msg_1", "test-topic", {"index": 1}, datetime.datetime.now(datetime.timezone.utc)
+        # Save multiple messages and track IDs
+        msg_1 = await test_storage.save_message(
+            "test-topic", {"index": 1}, datetime.datetime.now(datetime.timezone.utc)
         )
-        await test_storage.save_message(
-            "msg_2", "test-topic", {"index": 2}, datetime.datetime.now(datetime.timezone.utc)
-        )
-        await test_storage.save_message(
-            "msg_3", "test-topic", {"index": 3}, datetime.datetime.now(datetime.timezone.utc)
-        )
+        await test_storage.save_message("test-topic", {"index": 2}, datetime.datetime.now(datetime.timezone.utc))
+        await test_storage.save_message("test-topic", {"index": 3}, datetime.datetime.now(datetime.timezone.utc))
 
         # Poll with since=msg_1 (should get msg_2 and msg_3)
         response = test_client.post(
             "/messages/poll",
             json={
                 "topics": ["test-topic"],
-                "since": {"test-topic": "msg_1"},
+                "since": {"test-topic": msg_1},
                 "timeout": 1,
             },
             headers={"Authorization": f"Bearer {auth_token}"},

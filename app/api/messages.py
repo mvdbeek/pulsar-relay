@@ -1,7 +1,6 @@
 """Message ingestion API endpoints."""
 
 import logging
-import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -97,17 +96,14 @@ async def create_message(
     # This will auto-create the topic if it doesn't exist, with current_user as owner
     await get_or_create_topic(message.topic, current_user)
 
-    # Generate unique message ID
-    message_id = f"msg_{uuid.uuid4().hex[:12]}"
     timestamp = datetime.now(timezone.utc)
 
     # Track metrics
     messages_received_total.labels(topic=message.topic).inc()
 
-    # Save to storage
+    # Save to storage - storage backend generates and returns the message ID
     with message_latency_seconds.labels(topic=message.topic).time():
-        await storage.save_message(
-            message_id=message_id,
+        message_id = await storage.save_message(
             topic=message.topic,
             payload=message.payload,
             timestamp=timestamp,
@@ -183,13 +179,10 @@ async def create_bulk_messages(
 
     for message in request.messages:
         try:
-            # Generate unique message ID
-            message_id = f"msg_{uuid.uuid4().hex[:12]}"
             timestamp = datetime.now(timezone.utc)
 
-            # Save to storage
-            await storage.save_message(
-                message_id=message_id,
+            # Save to storage - storage backend generates and returns the message ID
+            message_id = await storage.save_message(
                 topic=message.topic,
                 payload=message.payload,
                 timestamp=timestamp,

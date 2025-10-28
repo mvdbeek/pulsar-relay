@@ -69,47 +69,50 @@ class TestValkeyIntegrationBasics:
         """Test saving and retrieving a single message."""
         timestamp = datetime(2025, 1, 1, 12, 0, 0)
 
-        # Save message
-        await valkey_storage.save_message(
-            message_id="msg_integration_1",
+        # Save message - returns stream ID as message ID
+        message_id = await valkey_storage.save_message(
             topic="test-topic",
             payload={"data": "test value", "number": 42},
             timestamp=timestamp,
             metadata={"source": "integration-test"},
         )
 
+        # Verify message ID is in stream ID format (timestamp-sequence)
+        assert "-" in message_id
+
         # Retrieve messages
         messages = await valkey_storage.get_messages("test-topic")
 
         assert len(messages) == 1
-        assert messages[0]["message_id"] == "msg_integration_1"
+        assert messages[0]["message_id"] == message_id
         assert messages[0]["topic"] == "test-topic"
         assert messages[0]["payload"] == {"data": "test value", "number": 42}
         assert messages[0]["metadata"] == {"source": "integration-test"}
-        assert "stream_id" in messages[0]
+        assert messages[0]["stream_id"] == message_id
 
     @pytest.mark.asyncio
     async def test_save_multiple_messages_same_topic(self, valkey_storage):
         """Test saving multiple messages to the same topic."""
         base_time = datetime(2025, 1, 1, 12, 0, 0)
 
-        # Save 10 messages
+        # Save 10 messages and track the generated IDs
+        message_ids = []
         for i in range(10):
-            await valkey_storage.save_message(
-                message_id=f"msg_{i}",
+            msg_id = await valkey_storage.save_message(
                 topic="multi-test",
                 payload={"index": i, "data": f"message_{i}"},
                 timestamp=base_time + timedelta(seconds=i),
             )
+            message_ids.append(msg_id)
 
         # Retrieve all messages
         messages = await valkey_storage.get_messages("multi-test", limit=20)
 
         assert len(messages) == 10
 
-        # Verify messages are in order
+        # Verify messages are in order and have correct stream IDs
         for i, msg in enumerate(messages):
-            assert msg["message_id"] == f"msg_{i}"
+            assert msg["message_id"] == message_ids[i]
             assert msg["payload"]["index"] == i
 
     @pytest.mark.asyncio
@@ -123,7 +126,6 @@ class TestValkeyIntegrationBasics:
         for topic_idx, topic in enumerate(topics):
             for msg_idx in range(5):
                 await valkey_storage.save_message(
-                    message_id=f"msg_{topic}_{msg_idx}",
                     topic=topic,
                     payload={"topic": topic, "index": msg_idx},
                     timestamp=base_time + timedelta(seconds=msg_idx),
@@ -150,7 +152,6 @@ class TestValkeyIntegrationPagination:
         # Save 20 messages
         for i in range(20):
             await valkey_storage.save_message(
-                message_id=f"msg_{i:02d}",
                 topic="pagination-test",
                 payload={"index": i},
                 timestamp=base_time + timedelta(seconds=i),
@@ -177,7 +178,6 @@ class TestValkeyIntegrationPagination:
         # Save only 5 messages
         for i in range(5):
             await valkey_storage.save_message(
-                message_id=f"msg_{i}",
                 topic="limited-topic",
                 payload={"index": i},
                 timestamp=base_time + timedelta(seconds=i),
@@ -202,7 +202,6 @@ class TestValkeyIntegrationTrimming:
         # Save 150 messages
         for i in range(150):
             await valkey_storage.save_message(
-                message_id=f"msg_{i:03d}",
                 topic="trim-test",
                 payload={"index": i},
                 timestamp=base_time + timedelta(seconds=i),
@@ -220,7 +219,6 @@ class TestValkeyIntegrationTrimming:
         # Save 50 messages
         for i in range(50):
             await valkey_storage.save_message(
-                message_id=f"msg_{i}",
                 topic="manual-trim",
                 payload={"index": i},
                 timestamp=base_time + timedelta(seconds=i),
@@ -252,7 +250,6 @@ class TestValkeyIntegrationTrimming:
         # Save only 10 messages
         for i in range(10):
             await valkey_storage.save_message(
-                message_id=f"msg_{i}",
                 topic="small-topic",
                 payload={"index": i},
                 timestamp=base_time + timedelta(seconds=i),
@@ -277,7 +274,6 @@ class TestValkeyIntegrationPerformance:
 
         async def write_message(i: int):
             await valkey_storage.save_message(
-                message_id=f"concurrent_msg_{i}",
                 topic="concurrent-writes",
                 payload={"index": i},
                 timestamp=base_time + timedelta(milliseconds=i),
@@ -298,7 +294,6 @@ class TestValkeyIntegrationPerformance:
         async def write_to_topic(topic_idx: int):
             for msg_idx in range(10):
                 await valkey_storage.save_message(
-                    message_id=f"msg_{topic_idx}_{msg_idx}",
                     topic=f"concurrent-topic-{topic_idx}",
                     payload={"topic_idx": topic_idx, "msg_idx": msg_idx},
                     timestamp=base_time + timedelta(milliseconds=msg_idx),
@@ -321,7 +316,6 @@ class TestValkeyIntegrationPerformance:
         large_data = "x" * 100_000
 
         await valkey_storage.save_message(
-            message_id="large_msg",
             topic="large-payload",
             payload={"data": large_data, "size": len(large_data)},
             timestamp=base_time,
@@ -353,7 +347,6 @@ class TestValkeyIntegrationEdgeCases:
     async def test_message_without_metadata(self, valkey_storage):
         """Test saving and retrieving message without metadata."""
         await valkey_storage.save_message(
-            message_id="no_meta",
             topic="no-metadata",
             payload={"data": "test"},
             timestamp=datetime(2025, 1, 1, 12, 0, 0),
@@ -378,7 +371,6 @@ class TestValkeyIntegrationEdgeCases:
 
         for topic in special_topics:
             await valkey_storage.save_message(
-                message_id=f"msg_{topic}",
                 topic=topic,
                 payload={"topic": topic},
                 timestamp=base_time,
@@ -394,7 +386,6 @@ class TestValkeyIntegrationEdgeCases:
     async def test_unicode_in_payload(self, valkey_storage):
         """Test handling Unicode characters in payload."""
         await valkey_storage.save_message(
-            message_id="unicode_msg",
             topic="unicode-test",
             payload={
                 "text": "Hello 世界 🌍",
@@ -432,7 +423,6 @@ class TestValkeyIntegrationHealthAndMonitoring:
         # Perform some operations
         for i in range(10):
             await valkey_storage.save_message(
-                message_id=f"msg_{i}",
                 topic="health-test",
                 payload={"index": i},
                 timestamp=base_time + timedelta(seconds=i),
@@ -459,7 +449,6 @@ class TestValkeyIntegrationCleanup:
             topic = f"clear-test-{topic_idx}"
             for msg_idx in range(10):
                 await valkey_storage.save_message(
-                    message_id=f"msg_{topic_idx}_{msg_idx}",
                     topic=topic,
                     payload={"index": msg_idx},
                     timestamp=base_time + timedelta(seconds=msg_idx),
@@ -506,7 +495,6 @@ async def test_full_workflow():
         base_time = datetime(2025, 1, 1, 12, 0, 0)
         for i in range(30):
             await storage.save_message(
-                message_id=f"workflow_msg_{i}",
                 topic="workflow-test",
                 payload={"index": i, "data": f"message {i}"},
                 timestamp=base_time + timedelta(seconds=i),

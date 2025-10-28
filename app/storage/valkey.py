@@ -3,7 +3,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, cast
 
 from glide import ExclusiveIdBound, GlideClient, GlideClientConfiguration, MaxId, MinId, NodeAddress, TrimByMaxLen
 
@@ -93,20 +93,21 @@ class ValkeyStorage(StorageBackend):
 
     async def save_message(
         self,
-        message_id: str,
         topic: str,
         payload: dict[str, Any],
         timestamp: datetime,
         metadata: Optional[dict[str, str]] = None,
-    ) -> None:
+    ) -> str:
         """Save a message to Valkey Stream.
 
         Args:
-            message_id: Unique message identifier
             topic: Topic name
             payload: Message payload
             timestamp: Message timestamp
             metadata: Optional message metadata
+
+        Returns:
+            The stream ID assigned by Valkey (e.g., "1234567890123-0")
         """
         if not self._client:
             raise RuntimeError("Not connected to Valkey")
@@ -115,8 +116,8 @@ class ValkeyStorage(StorageBackend):
 
         # Prepare stream entry as list of tuples (GLIDE API requirement)
         # Valkey Streams stores fields as key-value pairs
+        # Note: We no longer store a separate message_id field - the stream ID IS the message ID
         fields: list[tuple[Union[str, bytes], Union[str, bytes]]] = [
-            ("message_id", message_id),
             ("payload", json.dumps(payload)),
             ("timestamp", timestamp.isoformat()),
         ]
@@ -129,6 +130,12 @@ class ValkeyStorage(StorageBackend):
             # XADD returns the stream entry ID (e.g., b"1234567890123-0")
             stream_entry_id = await self._client.xadd(stream_key, fields)
 
+            if not stream_entry_id:
+                raise RuntimeError("Failed to add message to stream - no ID returned")
+
+            # Decode the stream ID to return as message ID
+            message_id = cast(str, stream_entry_id.decode("utf-8"))
+
             # Trim stream to max length
             # Note: Using exact=True for predictable behavior. Approximate trimming
             # (exact=False) may not trim at all in some cases with Valkey GLIDE.
@@ -137,9 +144,9 @@ class ValkeyStorage(StorageBackend):
                 TrimByMaxLen(exact=True, threshold=self.max_messages_per_topic),
             )
 
-            msg_1 = f"Saved message {message_id} to topic {topic}"
-            msg_2 = f"{msg_1} with stream ID {stream_entry_id.decode() if stream_entry_id else None}"
-            logger.debug(msg_2)
+            logger.debug(f"Saved message to topic {topic} with stream ID {message_id}")
+
+            return message_id
 
         except Exception as e:
             logger.error(f"Failed to save message to Valkey: {e}")
@@ -150,7 +157,7 @@ class ValkeyStorage(StorageBackend):
 
         Args:
             topic: Topic name
-            since: Stream ID to start from (exclusive), or None for beginning
+            since: Message ID (stream ID) to start from (exclusive), or None for beginning
             limit: Maximum number of messages to retrieve
 
         Returns:
@@ -163,7 +170,6 @@ class ValkeyStorage(StorageBackend):
 
         try:
             # Determine starting bound
-            # MinId() for beginning, or ExclusiveIdBound(id) for pagination (skip the provided ID)
             start_bound = ExclusiveIdBound(since) if since else MinId()
 
             # XRANGE returns messages from start to end
@@ -183,13 +189,16 @@ class ValkeyStorage(StorageBackend):
                         field_value = pair[1].decode("utf-8")
                         fields[field_name] = field_value
 
+                    # The stream ID IS the message ID
+                    stream_id = entry_id_bytes.decode("utf-8")
+
                     # Parse the fields back into a message dict
                     message = {
-                        "message_id": fields.get("message_id", ""),
+                        "message_id": stream_id,  # Stream ID is now the message ID
                         "topic": topic,
                         "payload": json.loads(fields.get("payload", "{}")),
                         "timestamp": fields.get("timestamp", ""),
-                        "stream_id": entry_id_bytes.decode("utf-8"),  # Include stream ID for pagination
+                        "stream_id": stream_id,  # Keep for backward compatibility
                     }
 
                     if "metadata" in fields:
