@@ -1,16 +1,12 @@
 # Pulsar Relay
 
-A high-performance message relay system for real-time message delivery to clients via WebSocket and long-polling connections.
+A message relay system for real-time message delivery to clients via WebSocket and long-polling connections.
 
 ## Features
 
 - **Multi-Protocol Support**: WebSocket and HTTP long-polling
-- **High Throughput**: 10K+ messages/second per instance
-- **Low Latency**: <100ms message delivery
-- **Reliable Delivery**: At-least-once and at-most-once delivery modes
 - **Topic-Based Routing**: Subscribe to specific message topics
 - **Two-Tier Storage**: In-memory hot tier + Valkey persistent tier with AOF/RDB
-- **Durable Persistence**: <1 second data loss on crash with configurable retention
 - **Simple Architecture**: No external database required, just Valkey + application
 
 ## Quick Start
@@ -186,7 +182,6 @@ See [API.md](./API.md) for complete API documentation.
 
 - `GET /ws` - WebSocket connection endpoint
 - `GET /api/v1/poll` - Long-polling endpoint
-- `POST /api/v1/ack` - Acknowledge message receipt
 
 ### Management API
 
