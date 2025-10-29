@@ -152,13 +152,16 @@ class ValkeyStorage(StorageBackend):
             logger.error(f"Failed to save message to Valkey: {e}")
             raise
 
-    async def get_messages(self, topic: str, since: Optional[str] = None, limit: int = 10) -> list[dict[str, Any]]:
+    async def get_messages(
+        self, topic: str, since: Optional[str] = None, limit: int = 10, reverse: bool = False
+    ) -> list[dict[str, Any]]:
         """Retrieve messages from Valkey Stream.
 
         Args:
             topic: Topic name
-            since: Message ID (stream ID) to start from (exclusive), or None for beginning
+            since: Message ID (stream ID) to start from (exclusive), or None for beginning/end
             limit: Maximum number of messages to retrieve
+            reverse: If True, use XREVRANGE to get messages in reverse order (newest first)
 
         Returns:
             List of message dictionaries
@@ -169,12 +172,25 @@ class ValkeyStorage(StorageBackend):
         stream_key = self._get_stream_key(topic)
 
         try:
-            # Determine starting bound
-            start_bound = ExclusiveIdBound(since) if since else MinId()
+            if reverse:
+                # Use XREVRANGE for reverse order (newest first)
+                # XREVRANGE signature: xrevrange(key, end, start, count)
+                # Parameters: end=highest ID, start=lowest ID
+                # When since is provided, we want messages BEFORE (older than) that ID
+                if since:
+                    # End at just before the 'since' ID
+                    end_bound = ExclusiveIdBound(since)
+                else:
+                    # End at the most recent message
+                    end_bound = MaxId()
 
-            # XRANGE returns messages from start to end
-            # MaxId() means to the end of the stream
-            stream_entries = await self._client.xrange(stream_key, start=start_bound, end=MaxId(), count=limit)
+                start_bound = MinId()  # Start from the beginning
+                stream_entries = await self._client.xrevrange(stream_key, end=end_bound, start=start_bound, count=limit)
+            else:
+                # Use XRANGE for forward order (oldest first)
+                start_bound = ExclusiveIdBound(since) if since else MinId()
+                end_bound = MaxId()
+                stream_entries = await self._client.xrange(stream_key, start=start_bound, end=end_bound, count=limit)
 
             messages = []
             if stream_entries:
