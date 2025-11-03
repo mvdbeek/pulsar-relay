@@ -1,7 +1,7 @@
 """Topic management API endpoints."""
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -19,10 +19,31 @@ from app.auth.models import (
     TopicUpdate,
     User,
 )
+from app.models import PaginatedMessagesResponse, StoredMessage
+from app.storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/topics", tags=["topics"])
+
+# Storage dependency will be injected
+_storage: Optional[StorageBackend] = None
+
+
+def set_storage(storage: StorageBackend) -> None:
+    """Set the storage backend for the topics API."""
+    global _storage
+    _storage = storage
+
+
+def get_storage() -> StorageBackend:
+    """Get the current storage backend."""
+    if _storage is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Storage backend not initialized",
+        )
+    return _storage
 
 
 @router.post("", response_model=TopicPublic, status_code=status.HTTP_201_CREATED)
@@ -160,6 +181,107 @@ async def get_topic(
         description=topic.description,
         # Only show allowed_user_ids to owner
         allowed_user_ids=topic.allowed_user_ids if topic.owner_id == current_user.user_id else None,
+    )
+
+
+@router.get("/{topic_name}/messages", response_model=PaginatedMessagesResponse)
+async def get_topic_messages(
+    topic_name: str,
+    limit: int = 10,
+    order: str = "desc",
+    cursor: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+) -> PaginatedMessagesResponse:
+    """Get paginated messages for a topic.
+
+    Args:
+        topic_name: Topic name
+        limit: Maximum number of messages to retrieve (default: 10, max: 100)
+        order: Message order - "asc" for oldest first, "desc" for newest first (default: "desc")
+        cursor: Message ID cursor for pagination (exclusive).
+                - With order=asc: Returns messages after this cursor (forward in time)
+                - With order=desc: Returns messages before this cursor (backward in time)
+        current_user: Current authenticated user
+
+    Returns:
+        Paginated list of messages
+
+    Raises:
+        HTTPException: If topic not found, access denied, or invalid order parameter
+
+    Examples:
+        - Get newest 10 messages: GET /topics/foo/messages?limit=10
+        - Get oldest 10 messages: GET /topics/foo/messages?limit=10&order=asc
+        - Page forward: GET /topics/foo/messages?order=asc&cursor=msg_5&limit=10
+        - Page backward: GET /topics/foo/messages?order=desc&cursor=msg_15&limit=10
+    """
+    topic_storage = get_topic_storage()
+    message_storage = get_storage()
+
+    # Verify topic exists
+    topic = await topic_storage.get_topic(topic_name)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Topic '{topic_name}' not found",
+        )
+
+    # Check if user has read access
+    can_access = await topic_storage.user_can_access(
+        topic_name=topic_name,
+        user_id=current_user.user_id,
+        permission_type="read",
+        user_permissions=current_user.permissions,
+    )
+
+    if not can_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Access denied to topic '{topic_name}'",
+        )
+
+    # Validate order parameter
+    if order not in ("asc", "desc"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Order must be 'asc' or 'desc'",
+        )
+
+    # Validate and cap limit
+    if limit < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Limit must be at least 1",
+        )
+    limit = min(limit, 100)
+
+    # Get messages from storage
+    # Use reverse=True for desc (newest first), reverse=False for asc (oldest first)
+    reverse = order == "desc"
+    raw_messages = await message_storage.get_messages(topic=topic_name, since=cursor, limit=limit, reverse=reverse)
+
+    # Convert to response model
+    messages = [
+        StoredMessage(
+            message_id=msg["message_id"],
+            topic=msg["topic"],
+            payload=msg["payload"],
+            timestamp=msg["timestamp"],
+            metadata=msg.get("metadata"),
+        )
+        for msg in raw_messages
+    ]
+
+    # Determine next cursor (last message ID in the result)
+    next_cursor = messages[-1].message_id if messages else None
+
+    return PaginatedMessagesResponse(
+        messages=messages,
+        total=len(messages),
+        limit=limit,
+        order=order,
+        cursor=cursor,
+        next_cursor=next_cursor,
     )
 
 

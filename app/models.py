@@ -156,3 +156,24 @@ class ReadinessResponse(BaseModel):
 
     ready: bool
     checks: dict[str, str]
+
+
+class StoredMessage(BaseModel):
+    """Stored message model for GET operations."""
+
+    message_id: str = Field(..., description="Unique message identifier")
+    topic: str = Field(..., description="Topic name")
+    payload: dict[str, Any] = Field(..., description="Message payload")
+    timestamp: str = Field(..., description="Message timestamp")
+    metadata: Optional[dict[str, str]] = Field(None, description="Optional metadata")
+
+
+class PaginatedMessagesResponse(BaseModel):
+    """Paginated messages response."""
+
+    messages: list[StoredMessage] = Field(..., description="List of messages")
+    total: int = Field(..., description="Total number of messages returned")
+    limit: int = Field(..., description="Requested limit")
+    order: str = Field(..., description="Order of messages: 'asc' (oldest first) or 'desc' (newest first)")
+    cursor: Optional[str] = Field(None, description="Cursor message ID (if provided)")
+    next_cursor: Optional[str] = Field(None, description="Message ID to use for next page")

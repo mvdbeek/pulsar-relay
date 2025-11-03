@@ -133,6 +133,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     messages.set_poll_manager(poll_manager)
     messages.set_pubsub_coordinator(pubsub_coordinator)
     health.set_storage(storage)
+    topics.set_storage(storage)
     websocket.set_manager(connection_manager)
 
     log.info("Application startup complete")

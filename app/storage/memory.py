@@ -60,13 +60,16 @@ class MemoryStorage(StorageBackend):
 
         return message_id
 
-    async def get_messages(self, topic: str, since: Optional[str] = None, limit: int = 10) -> list[dict[str, Any]]:
+    async def get_messages(
+        self, topic: str, since: Optional[str] = None, limit: int = 10, reverse: bool = False
+    ) -> list[dict[str, Any]]:
         """Get messages from a topic.
 
         Args:
             topic: Topic name
             since: Message ID to start from (exclusive)
             limit: Maximum number of messages to return
+            reverse: If True, return messages in reverse chronological order (newest first)
 
         Returns:
             List of messages
@@ -76,6 +79,10 @@ class MemoryStorage(StorageBackend):
                 return []
 
             messages = list(self._messages[topic])
+
+            # If reverse, start from the end
+            if reverse:
+                messages.reverse()
 
             # Filter by since if provided
             if since:
