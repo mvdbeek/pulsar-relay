@@ -6,12 +6,12 @@ from typing import TYPE_CHECKING, Literal, Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
-from app.auth.jwt import decode_token
-from app.auth.models import TokenPayload, User
-from app.auth.storage import UserStorage
+from pulsar_relay.auth.jwt import decode_token
+from pulsar_relay.auth.models import TokenPayload, User
+from pulsar_relay.auth.storage import UserStorage
 
 if TYPE_CHECKING:
-    from app.auth.topic_storage import TopicStorage
+    from pulsar_relay.auth.topic_storage import TopicStorage
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,7 @@ async def get_current_user(
     Raises:
         HTTPException: If user not found or inactive
     """
-    from app.core.cache import user_cache
+    from pulsar_relay.core.cache import user_cache
 
     # Check cache first to reduce database load during high concurrency
     cache_key = f"user:{token_payload.sub}"
@@ -292,7 +292,7 @@ async def get_or_create_topic(topic_name: str, current_user: User):
     Raises:
         HTTPException: If topic creation fails
     """
-    from app.auth.models import TopicCreate
+    from pulsar_relay.auth.models import TopicCreate
 
     topic_storage = get_topic_storage()
 

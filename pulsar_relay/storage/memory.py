@@ -7,7 +7,7 @@ from datetime import datetime
 from sys import version_info
 from typing import Any, Optional
 
-from app.storage.base import StorageBackend
+from pulsar_relay.storage.base import StorageBackend
 
 
 class MemoryStorage(StorageBackend):

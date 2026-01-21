@@ -77,19 +77,20 @@ Issues = "https://github.com/mvdbeek/pulsar-relay/issues"
 Changelog = "https://github.com/mvdbeek/pulsar-relay/releases"
 
 [project.scripts]
-pulsar-relay = "app.main:main"
+pulsar-relay = "pulsar_relay.main:main"
 
-[tool.setuptools]
-packages = ["app"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pulsar_relay*"]
 
 [tool.setuptools.package-data]
-app = ["py.typed"]
+pulsar_relay = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = "-v --cov=app --cov-report=term-missing"
+addopts = "-v --cov=pulsar_relay --cov-report=term-missing"
 markers = [
     "integration: marks tests as integration tests (require external services like Valkey)",
 ]

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app.config import Settings, load_config_file, load_settings
+from pulsar_relay.config import Settings, load_config_file, load_settings
 
 
 @pytest.fixture(autouse=True)

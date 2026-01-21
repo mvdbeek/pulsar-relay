@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from glide import ExclusiveIdBound, MaxId, MinId
 
-from app.storage.valkey import ValkeyStorage
+from pulsar_relay.storage.valkey import ValkeyStorage
 
 
 @pytest.fixture
@@ -262,7 +262,7 @@ class TestValkeyStorage:
     @pytest.mark.asyncio
     async def test_connect_disconnect(self):
         """Test connecting and disconnecting from Valkey."""
-        with patch("app.storage.valkey.GlideClient") as mock_glide:
+        with patch("pulsar_relay.storage.valkey.GlideClient") as mock_glide:
             mock_client = AsyncMock()
             mock_glide.create = AsyncMock(return_value=mock_client)
 

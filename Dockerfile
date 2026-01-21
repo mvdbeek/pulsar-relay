@@ -46,7 +46,7 @@ stderr_logfile=/var/log/valkey/valkey-error.log
 priority=1
 
 [program:pulsar-relay]
-command=/usr/bin/python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8080 --workers 4
+command=/usr/bin/python3 -m uvicorn pulsar_relay.main:app --host 0.0.0.0 --port 8080 --workers 4
 directory=/app
 autostart=true
 autorestart=true

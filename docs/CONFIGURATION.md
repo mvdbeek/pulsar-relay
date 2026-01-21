@@ -23,7 +23,7 @@ export PULSAR_VALKEY_HOST=valkey.example.com
 export PULSAR_JWT_SECRET_KEY=your-secure-secret-key
 
 # Start the server (port and workers controlled by uvicorn)
-uvicorn app.main:app --host 0.0.0.0 --port 9000 --workers 4
+uvicorn pulsar_relay.main:app --host 0.0.0.0 --port 9000 --workers 4
 ```
 
 ### Option 2: .env File (Recommended for Development)
@@ -36,7 +36,7 @@ cp .env.example .env
 nano .env
 
 # Start the server (will automatically load .env, specify port and workers via uvicorn)
-uvicorn app.main:app --host 0.0.0.0 --port 8080 --workers 4
+uvicorn pulsar_relay.main:app --host 0.0.0.0 --port 8080 --workers 4
 ```
 
 ### Option 3: Config File (TOML)
@@ -49,7 +49,7 @@ cp config.toml.example config.toml
 nano config.toml
 
 # Start the server (will automatically find config.toml, specify port and workers via uvicorn)
-uvicorn app.main:app --host 0.0.0.0 --port 8080 --workers 4
+uvicorn pulsar_relay.main:app --host 0.0.0.0 --port 8080 --workers 4
 ```
 
 ### Option 4: Config File (YAML)
@@ -62,7 +62,7 @@ cp config.yaml.example config.yaml
 nano config.yaml
 
 # Start the server (will automatically find config.yaml, specify port and workers via uvicorn)
-uvicorn app.main:app --host 0.0.0.0 --port 8080 --workers 4
+uvicorn pulsar_relay.main:app --host 0.0.0.0 --port 8080 --workers 4
 ```
 
 ## Environment Variable Reference
@@ -202,7 +202,7 @@ export PULSAR_LOG_LEVEL=WARNING
 export PULSAR_JWT_SECRET_KEY="${JWT_SECRET}"  # From secret manager
 
 # Start with production settings (specify workers and port via uvicorn/gunicorn)
-gunicorn app.main:app -w 8 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8080
+gunicorn pulsar_relay.main:app -w 8 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8080
 ```
 
 ## Docker Deployment
@@ -215,7 +215,7 @@ docker run -d \
   -e PULSAR_JWT_SECRET_KEY=secret \
   -p 8080:8080 \
   pulsar-relay \
-  uvicorn app.main:app --host 0.0.0.0 --port 8080 --workers 4
+  uvicorn pulsar_relay.main:app --host 0.0.0.0 --port 8080 --workers 4
 
 # Using config file
 docker run -d \

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import WebSocket
 
-from app.core.connections import ConnectionManager
+from pulsar_relay.core.connections import ConnectionManager
 
 
 @pytest.fixture

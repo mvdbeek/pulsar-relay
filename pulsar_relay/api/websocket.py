@@ -7,10 +7,10 @@ from typing import Optional
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
-from app.auth.dependencies import get_topic_storage, get_user_storage
-from app.auth.jwt import decode_token
-from app.core.connections import ConnectionManager
-from app.models import (
+from pulsar_relay.auth.dependencies import get_topic_storage, get_user_storage
+from pulsar_relay.auth.jwt import decode_token
+from pulsar_relay.core.connections import ConnectionManager
+from pulsar_relay.models import (
     WebSocketAck,
     WebSocketError,
     WebSocketPong,
@@ -18,7 +18,7 @@ from app.models import (
     WebSocketSubscribed,
     WebSocketUnsubscribe,
 )
-from app.utils.metrics import (
+from pulsar_relay.utils.metrics import (
     active_websocket_connections,
     websocket_connections_total,
     websocket_disconnections_total,

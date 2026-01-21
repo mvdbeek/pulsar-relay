@@ -11,12 +11,12 @@ import os
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.api import messages, topics
-from app.auth.dependencies import set_topic_storage, set_user_storage
-from app.auth.jwt import create_access_token
-from app.auth.topic_storage import InMemoryTopicStorage
-from app.main import app
-from app.storage.valkey import ValkeyStorage
+from pulsar_relay.api import messages, topics
+from pulsar_relay.auth.dependencies import set_topic_storage, set_user_storage
+from pulsar_relay.auth.jwt import create_access_token
+from pulsar_relay.auth.topic_storage import InMemoryTopicStorage
+from pulsar_relay.main import app
+from pulsar_relay.storage.valkey import ValkeyStorage
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("VALKEY_INTEGRATION_TEST"), reason="VALKEY_INTEGRATION_TEST environment variable not set"

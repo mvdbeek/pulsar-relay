@@ -4,7 +4,7 @@ import datetime
 
 import pytest
 
-from app.storage.memory import MemoryStorage
+from pulsar_relay.storage.memory import MemoryStorage
 
 
 @pytest.mark.asyncio

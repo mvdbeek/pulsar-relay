@@ -5,7 +5,7 @@ import datetime
 import pytest
 from pydantic import ValidationError
 
-from app.models import (
+from pulsar_relay.models import (
     BulkMessageRequest,
     Message,
     MessageResponse,

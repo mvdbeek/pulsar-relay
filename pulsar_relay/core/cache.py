@@ -3,7 +3,7 @@
 import time
 from typing import Generic, Optional, TypeVar
 
-from app.auth.models import User
+from pulsar_relay.auth.models import User
 
 T = TypeVar("T")
 

@@ -13,8 +13,8 @@ from datetime import datetime, timezone
 import pytest
 from glide import GlideClient, GlideClientConfiguration, NodeAddress
 
-from app.auth.models import User, UserCreate
-from app.auth.storage import ValkeyUserStorage
+from pulsar_relay.auth.models import User, UserCreate
+from pulsar_relay.auth.storage import ValkeyUserStorage
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("VALKEY_INTEGRATION_TEST"), reason="VALKEY_INTEGRATION_TEST environment variable not set"

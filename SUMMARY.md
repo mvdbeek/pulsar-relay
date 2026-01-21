@@ -88,7 +88,7 @@ pip install fastapi[standard] uvicorn[standard] valkey-glide pydantic-settings
 docker run -d -p 6379:6379 -v valkey-data:/data valkey/valkey --appendonly yes
 
 # Run minimal example (see PYTHON_QUICKSTART.md)
-uvicorn app.main:app --reload
+uvicorn pulsar_relay.main:app --reload
 ```
 
 ### Start Full Stack (Docker)

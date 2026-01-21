@@ -12,9 +12,6 @@ include config.toml.example
 include .env.example
 include valkey.conf
 
-# Include the py.typed marker for PEP 561
-recursive-include app py.typed
-
 # Exclude development and test files
 exclude tox.ini
 exclude client.py

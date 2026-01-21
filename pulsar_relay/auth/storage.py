@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
 
-from app.auth.jwt import hash_password
-from app.auth.models import User, UserCreate
+from pulsar_relay.auth.jwt import hash_password
+from pulsar_relay.auth.models import User, UserCreate
 
 logger = logging.getLogger(__name__)
 

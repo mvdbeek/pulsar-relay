@@ -7,8 +7,8 @@ from uuid import uuid4
 
 import pytest
 
-from app.auth.models import User, UserCreate
-from app.auth.storage import ValkeyUserStorage
+from pulsar_relay.auth.models import User, UserCreate
+from pulsar_relay.auth.storage import ValkeyUserStorage
 
 
 @pytest.fixture

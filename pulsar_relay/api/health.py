@@ -5,8 +5,8 @@ from typing import Optional
 
 from fastapi import APIRouter
 
-from app.models import HealthResponse, ReadinessResponse
-from app.storage.base import StorageBackend
+from pulsar_relay.models import HealthResponse, ReadinessResponse
+from pulsar_relay.storage.base import StorageBackend
 
 router = APIRouter(tags=["health"])
 

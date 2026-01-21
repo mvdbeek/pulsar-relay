@@ -9,16 +9,16 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api import messages, websocket
-from app.auth.dependencies import set_topic_storage, set_user_storage
-from app.auth.jwt import create_access_token
-from app.auth.models import UserCreate
-from app.auth.storage import InMemoryUserStorage, UserStorage
-from app.auth.topic_storage import InMemoryTopicStorage
-from app.core.connections import ConnectionManager
-from app.core.polling import PollManager
-from app.main import app
-from app.storage.memory import MemoryStorage
+from pulsar_relay.api import messages, websocket
+from pulsar_relay.auth.dependencies import set_topic_storage, set_user_storage
+from pulsar_relay.auth.jwt import create_access_token
+from pulsar_relay.auth.models import UserCreate
+from pulsar_relay.auth.storage import InMemoryUserStorage, UserStorage
+from pulsar_relay.auth.topic_storage import InMemoryTopicStorage
+from pulsar_relay.core.connections import ConnectionManager
+from pulsar_relay.core.polling import PollManager
+from pulsar_relay.main import app
+from pulsar_relay.storage.memory import MemoryStorage
 
 
 async def create_default_users(storage: UserStorage) -> None:
@@ -236,7 +236,7 @@ async def real_server(request):
     # Build uvicorn command
     cmd = [
         "uvicorn",
-        "app.main:app",
+        "pulsar_relay.main:app",
         "--host",
         "127.0.0.1",
         "--port",

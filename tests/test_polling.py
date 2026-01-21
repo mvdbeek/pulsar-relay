@@ -7,9 +7,9 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.polling import PollManager, PollWaiter
-from app.main import app
-from app.storage.memory import MemoryStorage
+from pulsar_relay.core.polling import PollManager, PollWaiter
+from pulsar_relay.main import app
+from pulsar_relay.storage.memory import MemoryStorage
 
 
 @pytest.fixture
@@ -164,7 +164,7 @@ def auth_token(auth_storage):
     """Create an auth token for a test user."""
     import asyncio
 
-    from app.auth.jwt import create_access_token
+    from pulsar_relay.auth.jwt import create_access_token
 
     loop = asyncio.get_event_loop()
     user = loop.run_until_complete(auth_storage.get_user_by_username("user"))
@@ -174,8 +174,8 @@ def auth_token(auth_storage):
 @pytest.fixture
 def test_client(test_storage, poll_manager, auth_storage):
     """Create a test client with properly initialized app state."""
-    from app.auth.dependencies import set_topic_storage, set_user_storage
-    from app.auth.topic_storage import InMemoryTopicStorage
+    from pulsar_relay.auth.dependencies import set_topic_storage, set_user_storage
+    from pulsar_relay.auth.topic_storage import InMemoryTopicStorage
 
     topic_storage = InMemoryTopicStorage()
 

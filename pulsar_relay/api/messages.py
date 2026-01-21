@@ -6,12 +6,12 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.auth.dependencies import get_or_create_topic, require_permission
-from app.auth.models import User
-from app.core.connections import ConnectionManager
-from app.core.polling import PollManager
-from app.core.pubsub import PubSubCoordinator
-from app.models import (
+from pulsar_relay.auth.dependencies import get_or_create_topic, require_permission
+from pulsar_relay.auth.models import User
+from pulsar_relay.core.connections import ConnectionManager
+from pulsar_relay.core.polling import PollManager
+from pulsar_relay.core.pubsub import PubSubCoordinator
+from pulsar_relay.models import (
     BulkMessageRequest,
     BulkMessageResponse,
     BulkMessageResult,
@@ -19,8 +19,8 @@ from app.models import (
     MessageResponse,
     WebSocketMessage,
 )
-from app.storage.base import StorageBackend
-from app.utils.metrics import message_latency_seconds, messages_received_total
+from pulsar_relay.storage.base import StorageBackend
+from pulsar_relay.utils.metrics import message_latency_seconds, messages_received_total
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)

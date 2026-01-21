@@ -7,7 +7,7 @@ from typing import Any, Optional, Union, cast
 
 from glide import ExclusiveIdBound, GlideClient, GlideClientConfiguration, MaxId, MinId, NodeAddress, TrimByMaxLen
 
-from app.storage.base import StorageBackend
+from pulsar_relay.storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
