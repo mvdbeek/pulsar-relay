@@ -231,7 +231,8 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
 
     if settings.jwt_secret_key == "your-secret-key-here-change-in-production":
         logger.warning(
-            "⚠️  WARNING: Using default JWT secret key! " "Set PULSAR_JWT_SECRET_KEY environment variable in production!"
+            "⚠️  WARNING: Using default JWT secret key! "
+            "Set PULSAR_JWT_SECRET_KEY environment variable in production!"
         )
 
     return settings

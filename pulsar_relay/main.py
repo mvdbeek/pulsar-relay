@@ -79,6 +79,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Only enable if using Valkey backend (required for cross-worker coordination)
     pubsub_coordinator = None
     if settings.storage_backend == "valkey" and isinstance(storage, ValkeyStorage):
+        assert storage._client is not None, "Valkey client should be connected"
         pubsub_coordinator = PubSubCoordinator(storage._client)
 
         # Register handlers to broadcast messages to local clients

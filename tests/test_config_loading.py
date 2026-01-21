@@ -34,14 +34,12 @@ class TestConfigFileLoading:
     def test_load_toml_config(self):
         """Test loading configuration from TOML file."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
-            f.write(
-                """
+            f.write("""
 app_name = "Test App"
 storage_backend = "valkey"
 log_level = "DEBUG"
 jwt_secret_key = "test-secret-key"
-            """
-            )
+            """)
             f.flush()
             config_path = Path(f.name)
 
@@ -58,14 +56,12 @@ jwt_secret_key = "test-secret-key"
     def test_load_yaml_config(self):
         """Test loading configuration from YAML file."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write(
-                """
+            f.write("""
 app_name: "Test App YAML"
 storage_backend: "memory"
 log_level: "WARNING"
 jwt_secret_key: "yaml-secret-key"
-            """
-            )
+            """)
             f.flush()
             config_path = Path(f.name)
 
@@ -87,13 +83,11 @@ jwt_secret_key: "yaml-secret-key"
     def test_config_file_with_nested_values(self):
         """Test TOML config with nested values."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
-            f.write(
-                """
+            f.write("""
 app_name = "Nested Test"
 valkey_host = "redis.example.com"
 valkey_port = 6380
-            """
-            )
+            """)
             f.flush()
             config_path = Path(f.name)
 
@@ -111,13 +105,11 @@ class TestSettingsFromConfigFile:
     def test_settings_from_toml(self):
         """Test creating Settings from TOML file."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
-            f.write(
-                """
+            f.write("""
 app_name = "Config Test"
 storage_backend = "valkey"
 log_level = "ERROR"
-            """
-            )
+            """)
             f.flush()
             config_path = Path(f.name)
 
@@ -180,12 +172,10 @@ class TestLoadSettings:
     def test_load_settings_with_config_path(self):
         """Test load_settings with explicit config path."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
-            f.write(
-                """
+            f.write("""
 app_name = "Load Settings Test"
 storage_backend = "memory"
-            """
-            )
+            """)
             f.flush()
             config_path = f.name
 
