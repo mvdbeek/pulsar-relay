@@ -5,13 +5,13 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.auth.dependencies import (
+from pulsar_relay.auth.dependencies import (
     get_current_user,
     get_topic_storage,
     get_user_storage,
     require_permission,
 )
-from app.auth.models import (
+from pulsar_relay.auth.models import (
     TopicCreate,
     TopicPermission,
     TopicPermissionGrant,
@@ -19,8 +19,8 @@ from app.auth.models import (
     TopicUpdate,
     User,
 )
-from app.models import PaginatedMessagesResponse, StoredMessage
-from app.storage.base import StorageBackend
+from pulsar_relay.models import PaginatedMessagesResponse, StoredMessage
+from pulsar_relay.storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 

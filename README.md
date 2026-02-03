@@ -34,7 +34,7 @@ export PULSAR_VALKEY_HOST=valkey.example.com
 export PULSAR_JWT_SECRET_KEY=your-secure-secret-key
 
 # Start the server (port and workers controlled by uvicorn)
-uvicorn app.main:app --host 0.0.0.0 --port 9000 --workers 4
+uvicorn pulsar_relay.main:app --host 0.0.0.0 --port 9000 --workers 4
 ```
 
 ### Docker Deployment

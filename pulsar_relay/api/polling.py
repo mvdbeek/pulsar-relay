@@ -6,10 +6,10 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.auth.dependencies import get_current_user, get_topic_storage, require_permission
-from app.auth.models import User
-from app.core.polling import PollManager
-from app.storage.base import StorageBackend
+from pulsar_relay.auth.dependencies import get_current_user, get_topic_storage, require_permission
+from pulsar_relay.auth.models import User
+from pulsar_relay.core.polling import PollManager
+from pulsar_relay.storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 

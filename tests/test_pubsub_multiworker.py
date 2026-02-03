@@ -31,7 +31,7 @@ class TestMultiWorkerPubSub:
     to test the PubSubCoordinator's cross-worker message broadcasting.
     """
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     @pytest.mark.parametrize("real_server", [{"workers": 3, "storage_backend": "valkey"}], indirect=True)
     async def test_message_reaches_all_workers_websocket(self, real_server):
         """Test that a message published to one worker reaches WebSocket clients on all workers.
@@ -151,7 +151,7 @@ class TestMultiWorkerPubSub:
         # (some might be on workers that didn't get subscribed in time)
         assert received_count == num_clients
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     @pytest.mark.parametrize("real_server", [{"workers": 3, "storage_backend": "valkey"}], indirect=True)
     async def test_multiple_messages_broadcast_correctly(self, real_server):
         """Test that multiple messages are broadcast correctly across workers."""
@@ -254,7 +254,7 @@ class TestMultiWorkerPubSub:
 
         print("✓ All clients received all messages via pub/sub")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     @pytest.mark.parametrize("real_server", [{"workers": 3, "storage_backend": "valkey"}], indirect=True)
     async def test_pubsub_coordinator_with_long_polling(self, real_server):
         """Test that pub/sub also broadcasts to long-polling clients across workers."""
@@ -316,7 +316,7 @@ class TestMultiWorkerPubSub:
 
         print("✓ Long-polling clients received messages via pub/sub")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     @pytest.mark.parametrize("real_server", [{"workers": 3, "storage_backend": "valkey"}], indirect=True)
     async def test_pubsub_handles_worker_specific_subscriptions(self, real_server):
         """Test that different topics are correctly routed to subscribed clients only."""

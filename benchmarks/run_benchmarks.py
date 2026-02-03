@@ -875,7 +875,7 @@ class BenchmarkRunner:
                 print("✅ Server is healthy and ready")
         except Exception as e:
             print(f"❌ Server not available: {e}")
-            print("Please start the server with: uvicorn app.main:app --reload")
+            print("Please start the server with: uvicorn pulsar_relay.main:app --reload")
             return
 
         # Run benchmarks

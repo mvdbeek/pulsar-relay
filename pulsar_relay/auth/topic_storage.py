@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 from uuid import uuid4
 
-from app.auth.models import Topic, TopicCreate
+from pulsar_relay.auth.models import Topic, TopicCreate
 
 logger = logging.getLogger(__name__)
 

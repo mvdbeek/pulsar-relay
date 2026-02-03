@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from app.storage.valkey import ValkeyStorage
+from pulsar_relay.storage.valkey import ValkeyStorage
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("VALKEY_INTEGRATION_TEST"), reason="VALKEY_INTEGRATION_TEST environment variable not set"
@@ -46,7 +46,7 @@ async def valkey_storage():
 class TestValkeyIntegrationBasics:
     """Basic integration tests for Valkey storage."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_connection_and_disconnection(self):
         """Test connecting and disconnecting from Valkey."""
         storage = ValkeyStorage(host="localhost", port=6379)
@@ -64,7 +64,7 @@ class TestValkeyIntegrationBasics:
         await storage.disconnect()
         assert storage._connected is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_save_and_retrieve_single_message(self, valkey_storage):
         """Test saving and retrieving a single message."""
         timestamp = datetime(2025, 1, 1, 12, 0, 0)
@@ -90,7 +90,7 @@ class TestValkeyIntegrationBasics:
         assert messages[0]["metadata"] == {"source": "integration-test"}
         assert messages[0]["stream_id"] == message_id
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_save_multiple_messages_same_topic(self, valkey_storage):
         """Test saving multiple messages to the same topic."""
         base_time = datetime(2025, 1, 1, 12, 0, 0)
@@ -115,7 +115,7 @@ class TestValkeyIntegrationBasics:
             assert msg["message_id"] == message_ids[i]
             assert msg["payload"]["index"] == i
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_multiple_topics(self, valkey_storage):
         """Test saving messages to multiple different topics."""
         base_time = datetime(2025, 1, 1, 12, 0, 0)
@@ -144,7 +144,7 @@ class TestValkeyIntegrationBasics:
 class TestValkeyIntegrationPagination:
     """Test pagination and stream ID handling."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pagination_with_limit(self, valkey_storage):
         """Test retrieving messages with pagination."""
         base_time = datetime(2025, 1, 1, 12, 0, 0)
@@ -170,7 +170,7 @@ class TestValkeyIntegrationPagination:
         assert page2[0]["payload"]["index"] == 10
         assert page2[9]["payload"]["index"] == 19
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pagination_beyond_available_messages(self, valkey_storage):
         """Test pagination when requesting more messages than available."""
         base_time = datetime(2025, 1, 1, 12, 0, 0)
@@ -193,7 +193,7 @@ class TestValkeyIntegrationPagination:
 class TestValkeyIntegrationTrimming:
     """Test stream trimming functionality."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_automatic_trimming_on_save(self, valkey_storage):
         """Test that streams are automatically trimmed when exceeding max length."""
         base_time = datetime(2025, 1, 1, 12, 0, 0)
@@ -211,7 +211,7 @@ class TestValkeyIntegrationTrimming:
         length = await valkey_storage.get_topic_length("trim-test")
         assert length == 100
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_manual_trimming(self, valkey_storage):
         """Test manually trimming a topic."""
         base_time = datetime(2025, 1, 1, 12, 0, 0)
@@ -242,7 +242,7 @@ class TestValkeyIntegrationTrimming:
         # Due to trimming from the beginning, we should have messages 30-49
         assert messages[0]["payload"]["index"] >= 30
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_trim_topic_no_trim_needed(self, valkey_storage):
         """Test trimming when topic has fewer messages than keep_count."""
         base_time = datetime(2025, 1, 1, 12, 0, 0)
@@ -267,7 +267,7 @@ class TestValkeyIntegrationTrimming:
 class TestValkeyIntegrationPerformance:
     """Test performance and concurrent operations."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_concurrent_writes_same_topic(self, valkey_storage):
         """Test writing to the same topic concurrently."""
         base_time = datetime(2025, 1, 1, 12, 0, 0)
@@ -286,7 +286,7 @@ class TestValkeyIntegrationPerformance:
         length = await valkey_storage.get_topic_length("concurrent-writes")
         assert length == 50
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_concurrent_writes_different_topics(self, valkey_storage):
         """Test writing to different topics concurrently."""
         base_time = datetime(2025, 1, 1, 12, 0, 0)
@@ -307,7 +307,7 @@ class TestValkeyIntegrationPerformance:
             length = await valkey_storage.get_topic_length(f"concurrent-topic-{i}")
             assert length == 10
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_large_payload(self, valkey_storage):
         """Test handling large message payloads."""
         base_time = datetime(2025, 1, 1, 12, 0, 0)
@@ -331,19 +331,19 @@ class TestValkeyIntegrationPerformance:
 class TestValkeyIntegrationEdgeCases:
     """Test edge cases and error handling."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_topic(self, valkey_storage):
         """Test retrieving from a non-existent/empty topic."""
         messages = await valkey_storage.get_messages("non-existent-topic")
         assert messages == []
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_topic_length_nonexistent(self, valkey_storage):
         """Test getting length of non-existent topic."""
         length = await valkey_storage.get_topic_length("does-not-exist")
         assert length == 0
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_message_without_metadata(self, valkey_storage):
         """Test saving and retrieving message without metadata."""
         await valkey_storage.save_message(
@@ -357,7 +357,7 @@ class TestValkeyIntegrationEdgeCases:
         assert len(messages) == 1
         assert messages[0]["metadata"] == {}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_special_characters_in_topic_name(self, valkey_storage):
         """Test topics with special characters."""
         special_topics = [
@@ -382,7 +382,7 @@ class TestValkeyIntegrationEdgeCases:
             assert len(messages) == 1
             assert messages[0]["payload"]["topic"] == topic
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_unicode_in_payload(self, valkey_storage):
         """Test handling Unicode characters in payload."""
         await valkey_storage.save_message(
@@ -405,7 +405,7 @@ class TestValkeyIntegrationEdgeCases:
 class TestValkeyIntegrationHealthAndMonitoring:
     """Test health checks and monitoring functionality."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_health_check(self, valkey_storage):
         """Test health check returns correct information."""
         health = await valkey_storage.health_check()
@@ -415,7 +415,7 @@ class TestValkeyIntegrationHealthAndMonitoring:
         assert health["host"] == "localhost"
         assert health["port"] == 6379
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_health_check_after_operations(self, valkey_storage):
         """Test health check after performing operations."""
         base_time = datetime(2025, 1, 1, 12, 0, 0)
@@ -439,7 +439,7 @@ class TestValkeyIntegrationHealthAndMonitoring:
 class TestValkeyIntegrationCleanup:
     """Test cleanup and clear operations."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_clear_all_topics(self, valkey_storage):
         """Test clearing all topics."""
         base_time = datetime(2025, 1, 1, 12, 0, 0)
@@ -468,7 +468,7 @@ class TestValkeyIntegrationCleanup:
             assert length == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_connection_failure_handling():
     """Test handling of connection failures."""
     # Try to connect to non-existent Valkey instance
@@ -478,7 +478,7 @@ async def test_connection_failure_handling():
         await storage.connect()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_full_workflow():
     """Test a complete workflow: connect, write, read, trim, disconnect."""
     storage = ValkeyStorage(host="localhost", port=6379, max_messages_per_topic=50)

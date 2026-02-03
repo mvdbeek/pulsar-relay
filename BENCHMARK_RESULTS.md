@@ -130,7 +130,7 @@ To reproduce these results:
 
 ```bash
 # Start the server
-uvicorn app.main:app --host 0.0.0.0 --port 8080
+uvicorn pulsar_relay.main:app --host 0.0.0.0 --port 8080
 
 # In another terminal, run benchmarks
 python benchmarks/run_benchmarks.py

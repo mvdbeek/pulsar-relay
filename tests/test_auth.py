@@ -6,20 +6,20 @@ from datetime import timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api import messages
-from app.auth.dependencies import set_topic_storage, set_user_storage
-from app.auth.jwt import (
+from pulsar_relay.api import messages
+from pulsar_relay.auth.dependencies import set_topic_storage, set_user_storage
+from pulsar_relay.auth.jwt import (
     create_access_token,
     decode_token,
     hash_password,
     verify_password,
 )
-from app.auth.models import UserCreate
-from app.auth.storage import InMemoryUserStorage
-from app.auth.topic_storage import InMemoryTopicStorage
-from app.core.polling import PollManager
-from app.main import app
-from app.storage.memory import MemoryStorage
+from pulsar_relay.auth.models import UserCreate
+from pulsar_relay.auth.storage import InMemoryUserStorage
+from pulsar_relay.auth.topic_storage import InMemoryTopicStorage
+from pulsar_relay.core.polling import PollManager
+from pulsar_relay.main import app
+from pulsar_relay.storage.memory import MemoryStorage
 
 
 @pytest.fixture
@@ -68,7 +68,7 @@ class TestPasswordHashing:
 class TestJWTTokens:
     """Test JWT token creation and validation."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_create_and_decode_token(self, auth_storage):
         """Test creating and decoding JWT tokens."""
         user = await auth_storage.get_user_by_username("admin")
@@ -90,7 +90,7 @@ class TestJWTTokens:
         payload = decode_token(invalid_token)
         assert payload is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_token_with_custom_expiration(self, auth_storage):
         """Test creating token with custom expiration."""
         user = await auth_storage.get_user_by_username("admin")
@@ -108,7 +108,7 @@ class TestJWTTokens:
 class TestUserStorage:
     """Test user storage operations."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_create_user(self):
         """Test creating a new user."""
         storage = InMemoryUserStorage()
@@ -128,7 +128,7 @@ class TestUserStorage:
         assert "read" in user.permissions
         assert user.hashed_password != "testpass123"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_create_duplicate_user(self):
         """Test that creating a duplicate username fails."""
         storage = InMemoryUserStorage()
@@ -144,7 +144,7 @@ class TestUserStorage:
         with pytest.raises(ValueError, match="already exists"):
             await storage.create_user(user_data)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_user_by_username(self, auth_storage):
         """Test retrieving user by username."""
         user = await auth_storage.get_user_by_username("admin")
@@ -153,7 +153,7 @@ class TestUserStorage:
         assert user.username == "admin"
         assert "admin" in user.permissions
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_user_by_id(self, auth_storage):
         """Test retrieving user by ID."""
         # First get user by username to get the ID
@@ -166,7 +166,7 @@ class TestUserStorage:
         assert user_by_id.user_id == user.user_id
         assert user_by_id.username == "admin"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_update_user(self, auth_storage):
         """Test updating a user."""
         user = await auth_storage.get_user_by_username("user")
@@ -181,7 +181,7 @@ class TestUserStorage:
         fetched = await auth_storage.get_user_by_id(user.user_id)
         assert fetched.email == "newemail@example.com"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delete_user(self, auth_storage):
         """Test deleting a user."""
         user = await auth_storage.get_user_by_username("readonly")

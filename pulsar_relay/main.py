@@ -10,18 +10,18 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.api import auth, health, messages, polling, topics, websocket
-from app.auth.dependencies import set_topic_storage, set_user_storage
-from app.auth.jwt import hash_password
-from app.auth.models import UserCreate
-from app.auth.storage import InMemoryUserStorage, UserStorage, ValkeyUserStorage
-from app.auth.topic_storage import InMemoryTopicStorage, TopicStorage, ValkeyTopicStorage
-from app.config import settings
-from app.core.connections import ConnectionManager
-from app.core.polling import PollManager
-from app.core.pubsub import PubSubCoordinator
-from app.storage.memory import MemoryStorage
-from app.storage.valkey import ValkeyStorage
+from pulsar_relay.api import auth, health, messages, polling, topics, websocket
+from pulsar_relay.auth.dependencies import set_topic_storage, set_user_storage
+from pulsar_relay.auth.jwt import hash_password
+from pulsar_relay.auth.models import UserCreate
+from pulsar_relay.auth.storage import InMemoryUserStorage, UserStorage, ValkeyUserStorage
+from pulsar_relay.auth.topic_storage import InMemoryTopicStorage, TopicStorage, ValkeyTopicStorage
+from pulsar_relay.config import settings
+from pulsar_relay.core.connections import ConnectionManager
+from pulsar_relay.core.polling import PollManager
+from pulsar_relay.core.pubsub import PubSubCoordinator
+from pulsar_relay.storage.memory import MemoryStorage
+from pulsar_relay.storage.valkey import ValkeyStorage
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +79,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Only enable if using Valkey backend (required for cross-worker coordination)
     pubsub_coordinator = None
     if settings.storage_backend == "valkey" and isinstance(storage, ValkeyStorage):
+        assert storage._client is not None, "Valkey client should be connected"
         pubsub_coordinator = PubSubCoordinator(storage._client)
 
         # Register handlers to broadcast messages to local clients

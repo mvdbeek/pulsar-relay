@@ -13,8 +13,8 @@ from datetime import datetime, timezone
 import pytest
 from glide import GlideClient, GlideClientConfiguration, NodeAddress
 
-from app.auth.models import User, UserCreate
-from app.auth.storage import ValkeyUserStorage
+from pulsar_relay.auth.models import User, UserCreate
+from pulsar_relay.auth.storage import ValkeyUserStorage
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("VALKEY_INTEGRATION_TEST"), reason="VALKEY_INTEGRATION_TEST environment variable not set"
@@ -54,7 +54,7 @@ async def valkey_user_storage(valkey_client):
 class TestValkeyUserStorageIntegrationBasics:
     """Basic integration tests for ValkeyUserStorage."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_create_and_retrieve_user_by_username(self, valkey_user_storage):
         """Test creating and retrieving a user by username."""
         user_data = UserCreate(
@@ -88,7 +88,7 @@ class TestValkeyUserStorageIntegrationBasics:
         assert retrieved_user.is_active == created_user.is_active
         assert retrieved_user.permissions == created_user.permissions
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_create_and_retrieve_user_by_id(self, valkey_user_storage):
         """Test creating and retrieving a user by ID (which is username)."""
         user_data = UserCreate(
@@ -111,7 +111,7 @@ class TestValkeyUserStorageIntegrationBasics:
         assert retrieved_user.email == "test2@example.com"
         assert retrieved_user.permissions == ["admin"]
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_create_duplicate_username(self, valkey_user_storage):
         """Test that creating a duplicate username raises ValueError."""
         user_data = UserCreate(
@@ -133,7 +133,7 @@ class TestValkeyUserStorageIntegrationBasics:
         with pytest.raises(ValueError, match="Username 'duplicate' already exists"):
             await valkey_user_storage.create_user(duplicate_data)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_nonexistent_user(self, valkey_user_storage):
         """Test retrieving a non-existent user returns None."""
         user = await valkey_user_storage.get_user_by_username("nonexistent")
@@ -142,7 +142,7 @@ class TestValkeyUserStorageIntegrationBasics:
         user_by_id = await valkey_user_storage.get_user_by_id("nonexistent")
         assert user_by_id is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_create_user_without_email(self, valkey_user_storage):
         """Test creating a user without an email."""
         user_data = UserCreate(
@@ -164,7 +164,7 @@ class TestValkeyUserStorageIntegrationBasics:
 class TestValkeyUserStorageIntegrationUpdates:
     """Test user update operations."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_update_user(self, valkey_user_storage):
         """Test updating an existing user."""
         # Create user
@@ -196,7 +196,7 @@ class TestValkeyUserStorageIntegrationUpdates:
         assert retrieved_user.permissions == ["read", "write", "admin"]
         assert retrieved_user.is_active is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_update_nonexistent_user(self, valkey_user_storage):
         """Test updating a non-existent user raises ValueError."""
         user = User(
@@ -213,7 +213,7 @@ class TestValkeyUserStorageIntegrationUpdates:
         with pytest.raises(ValueError, match="User nonexistent not found"):
             await valkey_user_storage.update_user(user)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_update_user_owned_topics(self, valkey_user_storage):
         """Test updating user's owned topics."""
         # Create user
@@ -237,7 +237,7 @@ class TestValkeyUserStorageIntegrationUpdates:
 class TestValkeyUserStorageIntegrationDeletion:
     """Test user deletion operations."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delete_user(self, valkey_user_storage):
         """Test deleting a user."""
         # Create user
@@ -260,13 +260,13 @@ class TestValkeyUserStorageIntegrationDeletion:
         deleted_user = await valkey_user_storage.get_user_by_username("deletetest")
         assert deleted_user is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delete_nonexistent_user(self, valkey_user_storage):
         """Test deleting a non-existent user returns False."""
         result = await valkey_user_storage.delete_user("doesnotexist")
         assert result is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delete_and_recreate_user(self, valkey_user_storage):
         """Test deleting and recreating a user with the same username."""
         # Create user
@@ -300,7 +300,7 @@ class TestValkeyUserStorageIntegrationDeletion:
 class TestValkeyUserStorageIntegrationMultipleUsers:
     """Test operations with multiple users."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_create_multiple_users(self, valkey_user_storage):
         """Test creating multiple users."""
         users = []
@@ -321,7 +321,7 @@ class TestValkeyUserStorageIntegrationMultipleUsers:
             assert retrieved.email == f"user{i}@example.com"
             assert retrieved.permissions == (["read"] if i % 2 == 0 else ["write"])
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_concurrent_user_creation(self, valkey_user_storage):
         """Test that usernames remain unique even with concurrent operations."""
 
@@ -343,7 +343,7 @@ class TestValkeyUserStorageIntegrationMultipleUsers:
         usernames = [u.username for u in users]
         assert len(set(usernames)) == 20
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_concurrent_duplicate_username_creation(self, valkey_user_storage):
         """Test that only one user is created when multiple concurrent requests try to create the same username.
 
@@ -393,7 +393,7 @@ class TestValkeyUserStorageIntegrationMultipleUsers:
 class TestValkeyUserStorageIntegrationEdgeCases:
     """Test edge cases and special characters."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_username_with_special_characters(self, valkey_user_storage):
         """Test usernames with various special characters."""
         special_usernames = [
@@ -417,7 +417,7 @@ class TestValkeyUserStorageIntegrationEdgeCases:
             assert retrieved is not None
             assert retrieved.username == username
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_unicode_in_email(self, valkey_user_storage):
         """Test handling Unicode characters in email."""
         user_data = UserCreate(
@@ -434,7 +434,7 @@ class TestValkeyUserStorageIntegrationEdgeCases:
         assert retrieved is not None
         assert retrieved.email == "用户@例え.com"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_valid_permissions(self, valkey_user_storage):
         """Test handling all valid permission types."""
         # Only admin, read, and write are valid permissions
@@ -461,7 +461,7 @@ class TestValkeyUserStorageIntegrationEdgeCases:
 class TestValkeyUserStorageIntegrationStats:
     """Test storage statistics."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_stats(self, valkey_user_storage):
         """Test getting storage statistics."""
         stats = valkey_user_storage.get_stats()
@@ -471,7 +471,7 @@ class TestValkeyUserStorageIntegrationStats:
         assert "message" in stats
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_full_workflow():
     """Test a complete workflow: connect, create, read, update, delete."""
     # Create client

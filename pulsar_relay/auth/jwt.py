@@ -8,7 +8,7 @@ import jwt
 from jwt import DecodeError, ExpiredSignatureError, InvalidTokenError
 from pwdlib import PasswordHash
 
-from app.auth.models import TokenPayload, User
+from pulsar_relay.auth.models import TokenPayload, User
 
 logger = logging.getLogger(__name__)
 

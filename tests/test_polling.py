@@ -7,9 +7,9 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.polling import PollManager, PollWaiter
-from app.main import app
-from app.storage.memory import MemoryStorage
+from pulsar_relay.core.polling import PollManager, PollWaiter
+from pulsar_relay.main import app
+from pulsar_relay.storage.memory import MemoryStorage
 
 
 @pytest.fixture
@@ -19,16 +19,15 @@ def poll_manager():
 
 
 @pytest.fixture
-async def test_storage():
+def test_storage():
     """Create a test storage backend."""
-    storage = MemoryStorage()
-    return storage
+    return MemoryStorage()
 
 
 class TestPollWaiter:
     """Test PollWaiter class."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_waiter_creation(self):
         """Test creating a poll waiter."""
         waiter = PollWaiter("client_123", ["topic1", "topic2"])
@@ -37,7 +36,7 @@ class TestPollWaiter:
         assert waiter.topics == {"topic1", "topic2"}
         assert waiter.queue.empty()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_put_and_wait_for_messages(self):
         """Test putting messages and waiting for them."""
         waiter = PollWaiter("client_123", ["topic1"])
@@ -51,7 +50,7 @@ class TestPollWaiter:
         assert len(messages) == 1
         assert messages[0]["payload"]["data"] == "test"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_wait_timeout(self):
         """Test waiting times out when no messages arrive."""
         waiter = PollWaiter("client_123", ["topic1"])
@@ -60,7 +59,7 @@ class TestPollWaiter:
         messages = await waiter.wait_for_messages(timeout=0.1)
         assert messages == []
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_multiple_messages(self):
         """Test collecting multiple messages."""
         waiter = PollWaiter("client_123", ["topic1"])
@@ -78,7 +77,7 @@ class TestPollWaiter:
 class TestPollManager:
     """Test PollManager class."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_create_waiter(self, poll_manager):
         """Test creating a waiter through the manager."""
         waiter = await poll_manager.create_waiter(["topic1", "topic2"])
@@ -88,7 +87,7 @@ class TestPollManager:
         assert "topic2" in poll_manager._topic_subscribers
         assert waiter.client_id in poll_manager._topic_subscribers["topic1"]
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_remove_waiter(self, poll_manager):
         """Test removing a waiter."""
         waiter = await poll_manager.create_waiter(["topic1"])
@@ -104,7 +103,7 @@ class TestPollManager:
         assert client_id not in poll_manager._waiters
         assert client_id not in poll_manager._topic_subscribers.get("topic1", set())
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_broadcast_to_topic(self, poll_manager):
         """Test broadcasting messages to topic subscribers."""
         # Create multiple waiters
@@ -128,7 +127,7 @@ class TestPollManager:
         # waiter3 should not have received it
         assert waiter3.queue.empty()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_stats(self, poll_manager):
         """Test getting manager statistics."""
         await poll_manager.create_waiter(["topic1"])
@@ -141,7 +140,7 @@ class TestPollManager:
         assert stats["topic_subscriber_counts"]["topic1"] == 2
         assert stats["topic_subscriber_counts"]["topic2"] == 1
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cleanup_stale_waiters(self, poll_manager):
         """Test cleaning up stale waiters."""
         waiter = await poll_manager.create_waiter(["topic1"])
@@ -164,18 +163,17 @@ def auth_token(auth_storage):
     """Create an auth token for a test user."""
     import asyncio
 
-    from app.auth.jwt import create_access_token
+    from pulsar_relay.auth.jwt import create_access_token
 
-    loop = asyncio.get_event_loop()
-    user = loop.run_until_complete(auth_storage.get_user_by_username("user"))
+    user = asyncio.run(auth_storage.get_user_by_username("user"))
     return create_access_token(user)
 
 
 @pytest.fixture
 def test_client(test_storage, poll_manager, auth_storage):
     """Create a test client with properly initialized app state."""
-    from app.auth.dependencies import set_topic_storage, set_user_storage
-    from app.auth.topic_storage import InMemoryTopicStorage
+    from pulsar_relay.auth.dependencies import set_topic_storage, set_user_storage
+    from pulsar_relay.auth.topic_storage import InMemoryTopicStorage
 
     topic_storage = InMemoryTopicStorage()
 
@@ -191,7 +189,7 @@ def test_client(test_storage, poll_manager, auth_storage):
 class TestPollingEndpoint:
     """Test the long polling HTTP endpoint."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_poll_returns_200(self, test_client, auth_token):
         """Test polling endpoint returns successfully."""
         # Basic test that endpoint works and returns valid response
@@ -210,7 +208,7 @@ class TestPollingEndpoint:
         assert "has_more" in data
         assert isinstance(data["messages"], list)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_poll_timeout(self, test_client, auth_token):
         """Test polling times out when no messages arrive."""
         # Poll with short timeout
@@ -229,7 +227,7 @@ class TestPollingEndpoint:
         assert data["messages"] == []
         assert data["has_more"] is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_poll_receives_new_message(self, real_server):
         """Test polling receives a message that arrives during wait.
 
@@ -299,7 +297,7 @@ class TestPollingEndpoint:
             assert poll_data["messages"][0]["topic"] == "test-topic"
             assert poll_data["messages"][0]["payload"]["data"] == "test message"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_poll_with_since_parameter(self, test_storage, test_client, auth_token):
         """Test polling with since parameter for pagination."""
 
@@ -326,7 +324,7 @@ class TestPollingEndpoint:
         # Should get messages after msg_1
         assert len(data["messages"]) >= 2
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_poll_invalid_request(self, test_client, auth_token):
         """Test polling with invalid request."""
         # Empty topics list
@@ -341,7 +339,7 @@ class TestPollingEndpoint:
 
         assert response.status_code == 422  # Validation error
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_poll_stats_endpoint(self, test_client, auth_token):
         """Test the poll stats endpoint."""
         response = test_client.get("/messages/poll/stats", headers={"Authorization": f"Bearer {auth_token}"})
@@ -351,7 +349,7 @@ class TestPollingEndpoint:
         assert "active_waiters" in data
         assert "subscribed_topics" in data
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_poll_multiple_topics(self, test_client, auth_token):
         """Test polling multiple topics simultaneously."""
         response = test_client.post(

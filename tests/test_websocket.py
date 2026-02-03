@@ -12,14 +12,14 @@ from httpx import AsyncClient
 from httpx_ws import aconnect_ws
 from httpx_ws.transport import ASGIWebSocketTransport
 
-from app.api import health, messages, websocket
-from app.auth.dependencies import set_topic_storage, set_user_storage
-from app.auth.jwt import create_access_token
-from app.auth.models import TopicCreate
-from app.auth.topic_storage import InMemoryTopicStorage
-from app.core.connections import ConnectionManager
-from app.main import app
-from app.storage.memory import MemoryStorage
+from pulsar_relay.api import health, messages, websocket
+from pulsar_relay.auth.dependencies import set_topic_storage, set_user_storage
+from pulsar_relay.auth.jwt import create_access_token
+from pulsar_relay.auth.models import TopicCreate
+from pulsar_relay.auth.topic_storage import InMemoryTopicStorage
+from pulsar_relay.core.connections import ConnectionManager
+from pulsar_relay.main import app
+from pulsar_relay.storage.memory import MemoryStorage
 
 
 async def create_test_topics(topic_storage, user_id, topic_names):
@@ -91,24 +91,18 @@ async def async_client_setup(auth_storage):
     websocket.set_manager(manager)
 
     # Create async HTTP client with WebSocket support
-    transport = ASGIWebSocketTransport(app=app)
-    async_client = AsyncClient(transport=transport, base_url="http://test")
+    # Using anyio's pytest plugin avoids cancel scope issues with httpx-ws
+    async with AsyncClient(transport=ASGIWebSocketTransport(app=app), base_url="http://test") as async_client:
+        yield {
+            "storage": storage,
+            "manager": manager,
+            "topic_storage": topic_storage,
+            "async_client": async_client,
+            "token": token,
+            "test_user": test_user,
+            "auth_headers": {"Authorization": f"Bearer {token}"},
+        }
 
-    yield {
-        "storage": storage,
-        "manager": manager,
-        "topic_storage": topic_storage,
-        "async_client": async_client,
-        "token": token,
-        "test_user": test_user,
-        "auth_headers": {"Authorization": f"Bearer {token}"},
-    }
-
-    # Workaround for httpx-ws cancel scope issue with pytest-asyncio
-    # See: https://github.com/frankie567/httpx-ws/issues/78
-    transport.exit_stack = None
-    await async_client.aclose()
-    await asyncio.sleep(0)
     await storage.clear()
 
 

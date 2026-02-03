@@ -1,6 +1,6 @@
 """Tests for application configuration."""
 
-from app.config import Settings
+from pulsar_relay.config import Settings
 
 
 class TestSettings:

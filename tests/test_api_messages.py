@@ -3,12 +3,12 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.api import health, messages
-from app.auth.dependencies import set_topic_storage, set_user_storage
-from app.auth.jwt import create_access_token
-from app.auth.topic_storage import InMemoryTopicStorage
-from app.main import app
-from app.storage.memory import MemoryStorage
+from pulsar_relay.api import health, messages
+from pulsar_relay.auth.dependencies import set_topic_storage, set_user_storage
+from pulsar_relay.auth.jwt import create_access_token
+from pulsar_relay.auth.topic_storage import InMemoryTopicStorage
+from pulsar_relay.main import app
+from pulsar_relay.storage.memory import MemoryStorage
 
 
 @pytest.fixture

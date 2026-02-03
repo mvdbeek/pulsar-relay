@@ -6,18 +6,18 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 
-from app.auth.dependencies import (
+from pulsar_relay.auth.dependencies import (
     get_current_user,
     get_user_storage,
     require_permission,
 )
-from app.auth.jwt import (
+from pulsar_relay.auth.jwt import (
     create_access_token,
     get_token_expiration_seconds,
     hash_password,
     verify_password,
 )
-from app.auth.models import (
+from pulsar_relay.auth.models import (
     TokenResponse,
     User,
     UserCreate,
