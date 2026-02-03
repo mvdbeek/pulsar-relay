@@ -7,7 +7,7 @@ import pytest
 from pulsar_relay.storage.memory import MemoryStorage
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 class TestMemoryStorage:
     """Tests for MemoryStorage class."""
 

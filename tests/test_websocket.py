@@ -91,24 +91,18 @@ async def async_client_setup(auth_storage):
     websocket.set_manager(manager)
 
     # Create async HTTP client with WebSocket support
-    transport = ASGIWebSocketTransport(app=app)
-    async_client = AsyncClient(transport=transport, base_url="http://test")
+    # Using anyio's pytest plugin avoids cancel scope issues with httpx-ws
+    async with AsyncClient(transport=ASGIWebSocketTransport(app=app), base_url="http://test") as async_client:
+        yield {
+            "storage": storage,
+            "manager": manager,
+            "topic_storage": topic_storage,
+            "async_client": async_client,
+            "token": token,
+            "test_user": test_user,
+            "auth_headers": {"Authorization": f"Bearer {token}"},
+        }
 
-    yield {
-        "storage": storage,
-        "manager": manager,
-        "topic_storage": topic_storage,
-        "async_client": async_client,
-        "token": token,
-        "test_user": test_user,
-        "auth_headers": {"Authorization": f"Bearer {token}"},
-    }
-
-    # Workaround for httpx-ws cancel scope issue with pytest-asyncio
-    # See: https://github.com/frankie567/httpx-ws/issues/78
-    transport.exit_stack = None
-    await async_client.aclose()
-    await asyncio.sleep(0)
     await storage.clear()
 
 

@@ -22,7 +22,7 @@ async def valkey_user_storage():
 class TestValkeyUserStorage:
     """Test ValkeyUserStorage implementation."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_create_user(self, valkey_user_storage):
         """Test creating a new user."""
         # Mock hsetnx to return True (username successfully claimed)
@@ -53,7 +53,7 @@ class TestValkeyUserStorage:
         # Verify hset was called once for user data (username index set via hsetnx)
         assert valkey_user_storage._client.hset.call_count == 1
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_create_user_duplicate_username(self, valkey_user_storage):
         """Test creating a user with duplicate username raises ValueError."""
         # Mock hsetnx to return False (username claim failed - already exists)
@@ -68,7 +68,7 @@ class TestValkeyUserStorage:
         with pytest.raises(ValueError, match="Username 'duplicate' already exists"):
             await valkey_user_storage.create_user(user_data)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_user_by_id(self, valkey_user_storage):
         """Test retrieving a user by ID."""
         user_id = str(uuid4())
@@ -101,7 +101,7 @@ class TestValkeyUserStorage:
         # Verify hgetall was called with correct key
         valkey_user_storage._client.hgetall.assert_called_once_with(f"user:{user_id}")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_user_by_id_not_found(self, valkey_user_storage):
         """Test retrieving a non-existent user returns None."""
         valkey_user_storage._client.hgetall = AsyncMock(return_value=None)
@@ -110,7 +110,7 @@ class TestValkeyUserStorage:
 
         assert user is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_user_by_username(self, valkey_user_storage):
         """Test retrieving a user by username."""
         user_id = str(uuid4())
@@ -145,7 +145,7 @@ class TestValkeyUserStorage:
         # Verify hgetall was called with correct user_id
         valkey_user_storage._client.hgetall.assert_called_once_with(f"user:{user_id}")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_user_by_username_not_found(self, valkey_user_storage):
         """Test retrieving a non-existent username returns None."""
         # Mock hget to return None (username not in index)
@@ -155,7 +155,7 @@ class TestValkeyUserStorage:
 
         assert user is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_update_user(self, valkey_user_storage):
         """Test updating an existing user."""
         user_id = str(uuid4())
@@ -186,7 +186,7 @@ class TestValkeyUserStorage:
         # Verify hset was called with updated data
         valkey_user_storage._client.hset.assert_called_once()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_update_user_not_found(self, valkey_user_storage):
         """Test updating a non-existent user raises ValueError."""
         user = User(
@@ -206,7 +206,7 @@ class TestValkeyUserStorage:
         with pytest.raises(ValueError, match="User nonexistent not found"):
             await valkey_user_storage.update_user(user)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delete_user(self, valkey_user_storage):
         """Test deleting a user."""
         user_id = str(uuid4())
@@ -236,7 +236,7 @@ class TestValkeyUserStorage:
         valkey_user_storage._client.delete.assert_called_once_with([f"user:{user_id}"])
         valkey_user_storage._client.hdel.assert_called_once()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delete_user_not_found(self, valkey_user_storage):
         """Test deleting a non-existent user returns False."""
         # Mock hgetall to return None (user doesn't exist)
@@ -246,7 +246,7 @@ class TestValkeyUserStorage:
 
         assert result is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_stats(self, valkey_user_storage):
         """Test getting storage statistics."""
         stats = valkey_user_storage.get_stats()
@@ -256,7 +256,7 @@ class TestValkeyUserStorage:
         assert stats["storage_type"] == "valkey"
         assert "message" in stats
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_user_with_empty_email(self, valkey_user_storage):
         """Test retrieving a user with empty email."""
         user_id = str(uuid4())

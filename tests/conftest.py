@@ -21,6 +21,12 @@ from pulsar_relay.main import app
 from pulsar_relay.storage.memory import MemoryStorage
 
 
+@pytest.fixture
+def anyio_backend():
+    """Use asyncio backend for anyio tests."""
+    return "asyncio"
+
+
 async def create_default_users(storage: UserStorage) -> None:
     """Create default users for testing/development.
 
@@ -56,12 +62,25 @@ async def create_default_users(storage: UserStorage) -> None:
             print(f"Default user already exists: {e}")
 
 
-@pytest.fixture
-async def auth_storage():
-    """Create a fresh user storage with default users."""
+def _run_async(coro):
+    """Run an async coroutine synchronously."""
+    return asyncio.run(coro)
+
+
+def _create_auth_storage():
+    """Create a fresh user storage with default users (sync helper)."""
     storage = InMemoryUserStorage()
-    await create_default_users(storage)
+    _run_async(create_default_users(storage))
     return storage
+
+
+@pytest.fixture
+def auth_storage():
+    """Create a fresh user storage with default users.
+
+    This is a sync fixture to support both sync and async tests.
+    """
+    return _create_auth_storage()
 
 
 @pytest.fixture
@@ -71,24 +90,21 @@ def topic_storage():
 
 
 @pytest.fixture
-async def test_user(auth_storage):
+def test_user(auth_storage):
     """Get a test user (with read/write permissions)."""
-    user = await auth_storage.get_user_by_username("user")
-    return user
+    return _run_async(auth_storage.get_user_by_username("user"))
 
 
 @pytest.fixture
-async def admin_user(auth_storage):
+def admin_user(auth_storage):
     """Get an admin user."""
-    user = await auth_storage.get_user_by_username("admin")
-    return user
+    return _run_async(auth_storage.get_user_by_username("admin"))
 
 
 @pytest.fixture
-async def readonly_user(auth_storage):
+def readonly_user(auth_storage):
     """Get a readonly user."""
-    user = await auth_storage.get_user_by_username("readonly")
-    return user
+    return _run_async(auth_storage.get_user_by_username("readonly"))
 
 
 @pytest.fixture

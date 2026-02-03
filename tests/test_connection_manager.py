@@ -22,7 +22,7 @@ def mock_websocket():
     return ws
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 class TestConnectionManager:
     """Tests for ConnectionManager class."""
 
