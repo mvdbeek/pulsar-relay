@@ -30,7 +30,7 @@ from pulsar_relay.config import settings
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/auth/device", tags=["auth"])
+router = APIRouter(prefix="/auth/device", tags=["authentication"])
 
 
 _RFC8628_GRANT = "urn:ietf:params:oauth:grant-type:device_code"

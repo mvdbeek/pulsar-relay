@@ -25,7 +25,7 @@ from pulsar_relay.config import settings
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/auth/oidc", tags=["auth"])
+router = APIRouter(prefix="/auth/oidc", tags=["authentication"])
 
 
 class OIDCProviderSummary(BaseModel):
