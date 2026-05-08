@@ -72,13 +72,33 @@ def provision(redirect_uris: list[str], setup: Optional[KeycloakSetup] = None) -
     """Idempotently create the test realm/client/user.
 
     ``redirect_uris`` must include the relay's callback URL (so Keycloak will
-    redirect back after a successful sign-in).
+    redirect back after a successful sign-in). Re-running with a different
+    redirect URI updates the existing client in place — this matters when the
+    session-scoped Keycloak fixture is reused by multiple relay subprocesses
+    on different ports.
     """
     if setup is None:
         setup = KeycloakSetup(base_url="http://localhost:8089")
 
+    client_attrs = {
+        "clientId": setup.client_id,
+        "secret": setup.client_secret,
+        "enabled": True,
+        "publicClient": False,
+        "serviceAccountsEnabled": True,
+        "directAccessGrantsEnabled": True,
+        "standardFlowEnabled": True,
+        "redirectUris": redirect_uris,
+        "webOrigins": ["+"],
+        "attributes": {
+            "oauth2.device.authorization.grant.enabled": "true",
+            "pkce.code.challenge.method": "S256",
+        },
+    }
+
     with httpx.Client(timeout=30.0) as client:
         token = _admin_token(client, setup)
+        auth = {"Authorization": f"Bearer {token}"}
 
         # 1. Realm.
         _put_or_post(
@@ -89,28 +109,26 @@ def provision(redirect_uris: list[str], setup: Optional[KeycloakSetup] = None) -
             body={"realm": setup.realm, "enabled": True},
         )
 
-        # 2. Client (confidential, with PKCE/device flow enabled).
-        _put_or_post(
-            client,
-            method="POST",
-            url=f"{setup.base_url}/admin/realms/{setup.realm}/clients",
-            token=token,
-            body={
-                "clientId": setup.client_id,
-                "secret": setup.client_secret,
-                "enabled": True,
-                "publicClient": False,
-                "serviceAccountsEnabled": True,
-                "directAccessGrantsEnabled": True,
-                "standardFlowEnabled": True,
-                "redirectUris": redirect_uris,
-                "webOrigins": ["+"],
-                "attributes": {
-                    "oauth2.device.authorization.grant.enabled": "true",
-                    "pkce.code.challenge.method": "S256",
-                },
-            },
-        )
+        # 2. Client. POST is idempotent only if the client doesn't exist; on
+        # 409 we PUT to update the redirectUris (and any other config).
+        clients_url = f"{setup.base_url}/admin/realms/{setup.realm}/clients"
+        create_resp = client.post(clients_url, headers=auth, json=client_attrs)
+        if create_resp.status_code == 409:
+            existing = client.get(
+                clients_url,
+                headers=auth,
+                params={"clientId": setup.client_id},
+            )
+            existing.raise_for_status()
+            existing_id = existing.json()[0]["id"]
+            update = client.put(
+                f"{clients_url}/{existing_id}",
+                headers=auth,
+                json={**client_attrs, "id": existing_id},
+            )
+            update.raise_for_status()
+        elif create_resp.status_code not in (201, 204):
+            create_resp.raise_for_status()
 
         # 3. User with a password.
         _put_or_post(
