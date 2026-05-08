@@ -6,14 +6,15 @@ import logging
 from datetime import timedelta
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Form, HTTPException, Request, status
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
 from pulsar_relay.auth.dependencies import (
     get_device_code_storage,
     get_oidc_clients,
     get_oidc_state_storage,
+    get_refresh_token_storage,
     get_user_storage,
 )
 from pulsar_relay.auth.federation import login_or_provision_oidc_user
@@ -194,4 +195,97 @@ async def oidc_callback(
         access_token=access_token,
         token_type="bearer",
         expires_in=get_token_expiration_seconds(),
+    )
+
+
+@router.post("/{provider}/swagger-token")
+async def swagger_token_exchange(
+    provider: str,
+    grant_type: str = Form(...),
+    code: str = Form(...),
+    redirect_uri: str = Form(...),
+    code_verifier: Optional[str] = Form(None),
+    client_id: Optional[str] = Form(None),
+    client_secret: Optional[str] = Form(None),  # noqa: ARG001 — accepted but ignored
+) -> JSONResponse:
+    """Exchange an OIDC authorization code for a *relay-issued* JWT.
+
+    Used by the Swagger UI on ``/docs`` so an operator can authenticate via
+    the configured OIDC provider and get a relay token they can wield against
+    the rest of the API. The relay still only validates its own JWTs — this
+    endpoint is the bridge.
+
+    Unlike the standard ``/auth/oidc/{provider}/callback`` (which we drove via
+    a server-side ``state``/``nonce`` record), Swagger UI generates its own
+    state and nonce client-side, so there is no in-memory record to consult.
+    We rely on PKCE + ID-token signature/issuer/audience/exp to authenticate
+    the request.
+    """
+    if grant_type != "authorization_code":
+        return JSONResponse(
+            {"error": "unsupported_grant_type", "error_description": grant_type},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    if not settings.oidc.enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="OIDC disabled")
+    clients = get_oidc_clients()
+    oidc_client = clients.get(provider)
+    if oidc_client is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Unknown OIDC provider: {provider}"
+        )
+    if not code_verifier:
+        return JSONResponse(
+            {
+                "error": "invalid_request",
+                "error_description": "PKCE code_verifier required",
+            },
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    expected_client_id = settings.oidc.providers[provider].client_id
+    if client_id and client_id != expected_client_id:
+        return JSONResponse(
+            {"error": "invalid_client"},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        token_set = await oidc_client.exchange_code(
+            code=code,
+            redirect_uri=redirect_uri,
+            code_verifier=code_verifier,
+        )
+        # Swagger UI generated the nonce; we can't verify it server-side
+        # without storing it. PKCE + sig + iss + aud + exp keep us safe.
+        claims = await oidc_client.validate_id_token(token_set.id_token, nonce=None)
+    except OIDCError as exc:
+        logger.warning("Swagger OIDC token exchange failed for provider=%s: %s", provider, exc)
+        return JSONResponse(
+            {"error": "invalid_grant", "error_description": str(exc)},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    user_storage = get_user_storage()
+    user = await login_or_provision_oidc_user(
+        user_storage,
+        provider_name=provider,
+        provider_config=settings.oidc.providers[provider],
+        oidc_config=settings.oidc,
+        claims=claims,
+    )
+
+    access_token = create_access_token(user)
+    refresh_storage = get_refresh_token_storage()
+    _, refresh_wire = await refresh_storage.create(
+        user_id=user.user_id,
+        ttl=timedelta(days=settings.refresh_token_ttl_days),
+        client_hint="swagger-ui",
+    )
+    return JSONResponse(
+        {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "expires_in": get_token_expiration_seconds(),
+            "refresh_token": refresh_wire,
+        }
     )

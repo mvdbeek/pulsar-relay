@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from typing import Union
 
 from fastapi import FastAPI
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
@@ -141,11 +142,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Build OIDC clients (one per configured provider). Empty when oidc.enabled=False.
     oidc_clients: dict[str, OIDCClient] = {}
+    oidc_auth_urls: dict[str, str] = {}
     if settings.oidc.enabled:
         for name, provider_cfg in settings.oidc.providers.items():
-            oidc_clients[name] = OIDCClient(name, provider_cfg)
+            client_inst = OIDCClient(name, provider_cfg)
+            oidc_clients[name] = client_inst
+            # Resolve discovery so Swagger UI can reference the authorization
+            # endpoint synchronously when generating the OpenAPI schema. The
+            # OIDC client caches the discovery document.
+            try:
+                discovered = await client_inst._discover()
+                oidc_auth_urls[name] = discovered.authorization_endpoint
+            except Exception as exc:  # noqa: BLE001 — best-effort, log + skip
+                log.warning(
+                    "OIDC discovery failed for provider %s; Swagger UI will not "
+                    "show the OIDC button until /docs is reloaded. (%s)",
+                    name,
+                    exc,
+                )
         log.info("Initialized %d OIDC providers: %s", len(oidc_clients), list(oidc_clients))
     set_oidc_clients(oidc_clients)
+    # Stash auth URLs on app.state so the openapi() override can pick them up.
+    app.state.oidc_auth_urls = oidc_auth_urls
+    # Reset any cached schema so the next /openapi.json reflects the new auth URLs.
+    app.openapi_schema = None
 
     # Bootstrap admin user if configured
     if settings.bootstrap_admin_username and settings.bootstrap_admin_password:
@@ -198,13 +218,95 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     log.info("Application shutdown complete")
 
 
+# Build Swagger UI's OAuth2 init parameters from the first configured OIDC
+# provider (if any). Swagger UI only handles a single client_id at a time;
+# callers with multiple providers should pick the one they want via OAuth2's
+# scope picker. PKCE is mandatory because we make code_verifier required on
+# the swagger-token bridge endpoint.
+def _swagger_init_oauth() -> dict:
+    if not settings.oidc.enabled or not settings.oidc.providers:
+        return {}
+    name, provider_cfg = next(iter(settings.oidc.providers.items()))
+    return {
+        "clientId": provider_cfg.client_id,
+        # Confidential client. In a hardened deployment you would proxy the
+        # token exchange through the relay (which we already do via
+        # /auth/oidc/{provider}/swagger-token) and not put the secret in
+        # browser-side JS. Acceptable for /docs as a developer convenience.
+        "clientSecret": provider_cfg.client_secret,
+        "usePkceWithAuthorizationCodeGrant": True,
+        "scopes": " ".join(provider_cfg.scopes),
+        "additionalQueryStringParams": {"_oidc_provider": name},
+    }
+
+
 # Create FastAPI app with lifespan handler
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     description="High-performance message relay with WebSocket and long-polling support",
     lifespan=lifespan,
+    swagger_ui_init_oauth=_swagger_init_oauth(),
 )
+
+
+def _custom_openapi():
+    """Generate the OpenAPI schema, augmenting it with OIDC auth-code flows.
+
+    Each configured OIDC provider becomes a separate ``oauth2`` security
+    scheme. The authorization URL comes from the provider's discovery doc
+    (resolved at startup); the token URL is our own ``swagger-token`` bridge
+    that issues relay JWTs. The existing password flow stays in place so
+    operators can still authenticate as the bootstrap admin.
+    """
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+
+    auth_urls = getattr(app.state, "oidc_auth_urls", {}) or {}
+    if auth_urls:
+        components = schema.setdefault("components", {})
+        schemes = components.setdefault("securitySchemes", {})
+        for name, auth_url in auth_urls.items():
+            provider_cfg = settings.oidc.providers[name]
+            scheme_name = f"OIDC_{name}"
+            schemes[scheme_name] = {
+                "type": "oauth2",
+                "description": f"Sign in with {provider_cfg.display_name}",
+                "flows": {
+                    "authorizationCode": {
+                        "authorizationUrl": auth_url,
+                        "tokenUrl": f"/auth/oidc/{name}/swagger-token",
+                        "refreshUrl": "/auth/token/refresh",
+                        "scopes": {s: s for s in provider_cfg.scopes},
+                    }
+                },
+            }
+        # Make the OIDC schemes acceptable for every operation by adding them
+        # to the global security list alongside the existing password scheme.
+        global_security = schema.setdefault("security", [])
+        existing_pw = next(
+            (item for item in global_security if "OAuth2PasswordBearer" in item),
+            {"OAuth2PasswordBearer": []},
+        )
+        if existing_pw not in global_security:
+            global_security.append(existing_pw)
+        for name in auth_urls:
+            entry = {f"OIDC_{name}": list(settings.oidc.providers[name].scopes)}
+            if entry not in global_security:
+                global_security.append(entry)
+
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _custom_openapi
 
 
 # Include routers

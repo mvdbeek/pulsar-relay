@@ -43,6 +43,22 @@ First boot of Keycloak takes ~30 seconds while it imports the realm.
    curl -s http://localhost:9000/auth/me -H "Authorization: Bearer $ACCESS" | jq
    ```
 
+## Try the OIDC flow inside `/docs`
+
+Open <http://localhost:9000/docs> and click **Authorize**. You'll see two
+schemes:
+
+- `OAuth2PasswordBearer` — the legacy username/password flow. Use the
+  bootstrap admin (`admin` / `adminpw1234`).
+- `OIDC_keycloak` — full authorization-code + PKCE flow against
+  Keycloak. Pick this, click "Authorize", sign in as `alice` /
+  `alicepass`, and Swagger UI will end up holding a *relay-issued* JWT
+  (not a Keycloak token). The bridge endpoint
+  `POST /auth/oidc/keycloak/swagger-token` does the exchange.
+
+Once authorized, every "Try it out" call in the docs page is sent with
+the relay JWT.
+
 ## Try the device flow (no host browser dependency on the daemon)
 
 Simulating what `pulsar-config --login` does:

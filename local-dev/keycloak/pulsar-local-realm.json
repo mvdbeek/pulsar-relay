@@ -53,7 +53,8 @@
       "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": true,
       "redirectUris": [
-        "http://localhost:9000/auth/oidc/keycloak/callback"
+        "http://localhost:9000/auth/oidc/keycloak/callback",
+        "http://localhost:9000/docs/oauth2-redirect"
       ],
       "webOrigins": ["+"],
       "attributes": {
