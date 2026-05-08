@@ -91,9 +91,10 @@ pulsar_relay = ["py.typed"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 anyio_mode = "auto"
-addopts = "-v --cov=pulsar_relay --cov-report=term-missing"
+addopts = "-v --cov=pulsar_relay --cov-report=term-missing -m 'not e2e'"
 markers = [
     "integration: marks tests as integration tests (require external services like Valkey)",
+    "e2e: end-to-end tests that spin up Docker dependencies (Keycloak); run with `pytest -m e2e`",
 ]
 
 [tool.black]
