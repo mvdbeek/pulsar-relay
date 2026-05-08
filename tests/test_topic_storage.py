@@ -5,7 +5,6 @@ import pytest
 from pulsar_relay.auth.models import TopicCreate
 from pulsar_relay.auth.topic_storage import InMemoryTopicStorage
 
-
 OWNER_ID = "user-owner"
 OTHER_ID = "user-other"
 GRANTED_ID = "user-granted"
