@@ -15,10 +15,19 @@ logger = logging.getLogger(__name__)
 # Password hashing context
 pwd_context = PasswordHash.recommended()
 
-# JWT settings (should be loaded from config in production)
-SECRET_KEY = "your-secret-key-here-change-in-production"  # Should be in environment variable
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60  # 1 hour
+
+
+def _get_secret_key() -> str:
+    """Resolve the JWT signing secret from settings at call time.
+
+    Reading at call time (rather than module import) ensures env var changes
+    and test overrides are honored.
+    """
+    from pulsar_relay.config import settings
+
+    return settings.jwt_secret_key
 
 
 def hash_password(password: str) -> str:
@@ -71,7 +80,7 @@ def create_access_token(user: User, expires_delta: Optional[timedelta] = None) -
         "iat": int(now.timestamp()),
     }
 
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, _get_secret_key(), algorithm=ALGORITHM)
     logger.debug(f"Created JWT token for user {user.username}")
 
     return encoded_jwt
@@ -87,7 +96,7 @@ def decode_token(token: str) -> Optional[TokenPayload]:
         TokenPayload if valid, None otherwise
     """
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, _get_secret_key(), algorithms=[ALGORITHM])
         token_data = TokenPayload(**payload)
         return token_data
     except ExpiredSignatureError:

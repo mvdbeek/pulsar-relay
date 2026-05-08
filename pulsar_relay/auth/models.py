@@ -1,12 +1,31 @@
 """Authentication models and schemas."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
+
+def _utcnow() -> datetime:
+    """Timezone-aware UTC now (datetime.utcnow is deprecated)."""
+    return datetime.now(tz=timezone.utc)
+
 # Define valid permission values
 Permission = Literal["admin", "read", "write"]
+
+
+class FederatedIdentity(BaseModel):
+    """A user's identity at an upstream OIDC provider.
+
+    A user may have multiple federated identities (e.g. linked Google + Keycloak).
+    The ``(issuer, sub)`` pair is the immutable identifier from the IdP.
+    """
+
+    issuer: str = Field(..., description="OIDC issuer URL (iss claim)")
+    sub: str = Field(..., description="Stable subject identifier from the IdP (sub claim)")
+    provider_name: str = Field(..., description="Local provider config name (e.g. 'google', 'keycloak')")
+    email: Optional[str] = Field(None, description="Email claim at the time of linking")
+    linked_at: datetime = Field(default_factory=_utcnow)
 
 
 class User(BaseModel):
@@ -15,11 +34,16 @@ class User(BaseModel):
     user_id: str = Field(..., description="Unique user identifier")
     username: str = Field(..., description="Username")
     email: Optional[str] = Field(None, description="User email")
-    hashed_password: str = Field(..., description="Hashed password")
+    # Optional: OIDC-only users have no local password.
+    hashed_password: Optional[str] = Field(None, description="Hashed password (None for OIDC-only users)")
     is_active: bool = Field(default=True, description="Whether user is active")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     permissions: list[Permission] = Field(default_factory=list, description="User permissions (admin, read, write)")
     owned_topics: list[str] = Field(default_factory=list, description="Topics owned by this user")
+    federated_identities: list[FederatedIdentity] = Field(
+        default_factory=list,
+        description="Linked OIDC identities for this user",
+    )
 
 
 class UserCreate(BaseModel):
@@ -72,6 +96,10 @@ class TokenResponse(BaseModel):
     access_token: str = Field(..., description="JWT access token")
     token_type: str = Field(default="bearer", description="Token type")
     expires_in: int = Field(..., description="Token expiration time in seconds")
+    refresh_token: Optional[str] = Field(
+        None,
+        description="Long-lived refresh token (rotates on use). Optional for backwards compatibility.",
+    )
 
 
 class TokenPayload(BaseModel):
@@ -138,3 +166,73 @@ class TopicPermission(BaseModel):
     user_id: str
     username: str
     granted_at: datetime
+
+
+# --- Refresh tokens, device flow, OIDC state ---
+
+RefreshTokenRevokedReason = Literal["rotated", "logout", "replay", "admin", "expired"]
+
+
+class RefreshToken(BaseModel):
+    """Persisted refresh-token record.
+
+    The wire token is ``f"{jti}.{secret}"`` where ``secret`` is a random 32-byte
+    base64url string. We persist only ``secret_hash`` (sha256 hex) and look up
+    by ``jti``. ``parent_jti`` chains rotated tokens together so a replay can
+    revoke the entire family.
+    """
+
+    jti: str = Field(..., description="Token identifier (used for lookup)")
+    user_id: str = Field(..., description="User this token authenticates")
+    secret_hash: str = Field(..., description="sha256 hex of the secret half")
+    parent_jti: Optional[str] = Field(None, description="Previous token in the rotation chain")
+    issued_at: datetime = Field(default_factory=_utcnow)
+    expires_at: datetime = Field(..., description="Absolute expiry")
+    last_used_at: Optional[datetime] = Field(None, description="Last refresh time")
+    revoked: bool = Field(default=False)
+    revoked_reason: Optional[RefreshTokenRevokedReason] = None
+    client_hint: Optional[str] = Field(None, description="Free-form descriptor of the issuing client")
+
+
+DeviceCodeStatus = Literal["pending", "approved", "denied", "expired"]
+
+
+class DeviceCode(BaseModel):
+    """RFC 8628 device authorization grant record.
+
+    ``device_code_hash`` is sha256 of the device_code presented to the daemon.
+    ``user_code`` is the short, human-typeable code shown to the operator.
+    """
+
+    device_code_hash: str = Field(..., description="sha256 hex of the device_code")
+    user_code: str = Field(..., description="Short user-facing code (shown to operator)")
+    verification_uri: str = Field(..., description="Where the user goes to approve")
+    verification_uri_complete: str = Field(..., description="URI with user_code prefilled")
+    issued_at: datetime = Field(default_factory=_utcnow)
+    expires_at: datetime = Field(..., description="Absolute expiry (issued_at + ~10 min)")
+    interval: int = Field(default=5, description="Minimum poll interval in seconds (RFC 8628)")
+    last_polled_at: Optional[datetime] = None
+    status: DeviceCodeStatus = "pending"
+    user_id: Optional[str] = Field(None, description="Set once an OIDC sign-in approves the code")
+    client_hint: Optional[str] = Field(None, description="Free-form descriptor of the requesting client")
+
+
+class OIDCStateRecord(BaseModel):
+    """Short-lived per-request OIDC state, PKCE, and nonce.
+
+    Created when a user (or device flow) starts an authorization-code request,
+    consumed when the IdP redirects back to ``/auth/oidc/{provider}/callback``.
+    """
+
+    state: str = Field(..., description="Opaque state value used as the CSRF token")
+    provider_name: str = Field(..., description="Configured provider this state belongs to")
+    code_verifier: str = Field(..., description="PKCE code_verifier (kept server-side)")
+    nonce: str = Field(..., description="Nonce sent in auth request, verified in ID token")
+    redirect_uri: str = Field(..., description="The exact redirect_uri passed to the IdP")
+    next_url: Optional[str] = Field(None, description="Where to send the user after success")
+    device_user_code: Optional[str] = Field(
+        None,
+        description="If set, this state is bridging an in-flight device-flow approval",
+    )
+    issued_at: datetime = Field(default_factory=_utcnow)
+    expires_at: datetime = Field(..., description="Absolute expiry (typically 10 min)")

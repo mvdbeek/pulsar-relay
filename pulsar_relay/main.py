@@ -10,10 +10,33 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from pulsar_relay.api import auth, health, messages, polling, topics, websocket
-from pulsar_relay.auth.dependencies import set_topic_storage, set_user_storage
+from pulsar_relay.api import auth, device, health, messages, oidc, polling, topics, websocket
+from pulsar_relay.auth.dependencies import (
+    set_device_code_storage,
+    set_oidc_clients,
+    set_oidc_state_storage,
+    set_refresh_token_storage,
+    set_topic_storage,
+    set_user_storage,
+)
+from pulsar_relay.auth.device_flow import (
+    DeviceCodeStorage,
+    InMemoryDeviceCodeStorage,
+    ValkeyDeviceCodeStorage,
+)
 from pulsar_relay.auth.jwt import hash_password
 from pulsar_relay.auth.models import UserCreate
+from pulsar_relay.auth.oidc_client import OIDCClient
+from pulsar_relay.auth.oidc_state import (
+    InMemoryOIDCStateStorage,
+    OIDCStateStorage,
+    ValkeyOIDCStateStorage,
+)
+from pulsar_relay.auth.refresh import (
+    InMemoryRefreshTokenStorage,
+    RefreshTokenStorage,
+    ValkeyRefreshTokenStorage,
+)
 from pulsar_relay.auth.storage import InMemoryUserStorage, UserStorage, ValkeyUserStorage
 from pulsar_relay.auth.topic_storage import InMemoryTopicStorage, TopicStorage, ValkeyTopicStorage
 from pulsar_relay.config import settings
@@ -40,6 +63,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup: Initialize all services
     log.info("Starting up application...")
 
+    # Refuse to start with the default JWT secret outside of explicit dev runs.
+    if settings.jwt_secret_key == "your-secret-key-here-change-in-production":
+        log.warning(
+            "JWT_SECRET_KEY is set to its insecure default. Set PULSAR_JWT_SECRET_KEY"
+            " before exposing this relay to anyone."
+        )
+
     # Initialize storage based on configuration
     if settings.storage_backend == "valkey":
         log.info("Using Valkey storage backend")
@@ -58,6 +88,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         log.info("Initialized Valkey Topic Storage")
         user_storage: UserStorage = ValkeyUserStorage(storage._client)
         log.info("Initialized Valkey User Storage")
+        refresh_storage: RefreshTokenStorage = ValkeyRefreshTokenStorage(storage._client)
+        device_storage: DeviceCodeStorage = ValkeyDeviceCodeStorage(storage._client)
+        oidc_state_storage: OIDCStateStorage = ValkeyOIDCStateStorage(storage._client)
+        log.info("Initialized Valkey refresh/device/oidc-state storage")
     else:
         log.info("Using in-memory storage backend")
         storage = MemoryStorage(max_messages_per_topic=settings.max_messages_per_topic)
@@ -66,6 +100,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         log.info("Initialized In-Memory User Storage")
         topic_storage = InMemoryTopicStorage()
         log.info("Initialized In-Memory Topic Storage")
+        refresh_storage = InMemoryRefreshTokenStorage()
+        device_storage = InMemoryDeviceCodeStorage()
+        oidc_state_storage = InMemoryOIDCStateStorage()
+        log.info("Initialized in-memory refresh/device/oidc-state storage")
 
     # Initialize connection manager
     connection_manager = ConnectionManager()
@@ -97,6 +135,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     set_user_storage(user_storage)
     set_topic_storage(topic_storage)
+    set_refresh_token_storage(refresh_storage)
+    set_device_code_storage(device_storage)
+    set_oidc_state_storage(oidc_state_storage)
+
+    # Build OIDC clients (one per configured provider). Empty when oidc.enabled=False.
+    oidc_clients: dict[str, OIDCClient] = {}
+    if settings.oidc.enabled:
+        for name, provider_cfg in settings.oidc.providers.items():
+            oidc_clients[name] = OIDCClient(name, provider_cfg)
+        log.info("Initialized %d OIDC providers: %s", len(oidc_clients), list(oidc_clients))
+    set_oidc_clients(oidc_clients)
 
     # Bootstrap admin user if configured
     if settings.bootstrap_admin_username and settings.bootstrap_admin_password:
@@ -161,6 +210,8 @@ app = FastAPI(
 # Include routers
 app.include_router(health.router)
 app.include_router(auth.router, prefix="/auth", tags=["authentication"])
+app.include_router(oidc.router)
+app.include_router(device.router)
 app.include_router(topics.router)
 app.include_router(messages.router)
 app.include_router(websocket.router)

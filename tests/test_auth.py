@@ -7,7 +7,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pulsar_relay.api import messages
-from pulsar_relay.auth.dependencies import set_topic_storage, set_user_storage
+from pulsar_relay.auth.dependencies import (
+    set_device_code_storage,
+    set_oidc_clients,
+    set_oidc_state_storage,
+    set_refresh_token_storage,
+    set_topic_storage,
+    set_user_storage,
+)
+from pulsar_relay.auth.device_flow import InMemoryDeviceCodeStorage
 from pulsar_relay.auth.jwt import (
     create_access_token,
     decode_token,
@@ -15,6 +23,8 @@ from pulsar_relay.auth.jwt import (
     verify_password,
 )
 from pulsar_relay.auth.models import UserCreate
+from pulsar_relay.auth.oidc_state import InMemoryOIDCStateStorage
+from pulsar_relay.auth.refresh import InMemoryRefreshTokenStorage
 from pulsar_relay.auth.storage import InMemoryUserStorage
 from pulsar_relay.auth.topic_storage import InMemoryTopicStorage
 from pulsar_relay.core.polling import PollManager
@@ -33,6 +43,10 @@ def test_client(auth_storage):
     # Set up app state
     set_user_storage(auth_storage)
     set_topic_storage(topic_storage)
+    set_refresh_token_storage(InMemoryRefreshTokenStorage())
+    set_device_code_storage(InMemoryDeviceCodeStorage())
+    set_oidc_state_storage(InMemoryOIDCStateStorage())
+    set_oidc_clients({})
     app.state.user_storage = auth_storage
     app.state.topic_storage = topic_storage
     app.state.storage = msg_storage
@@ -103,6 +117,30 @@ class TestJWTTokens:
         payload = decode_token(token)
         assert payload is not None
         assert payload.sub == user.user_id
+
+    @pytest.mark.anyio
+    async def test_token_honors_settings_secret_key(self, auth_storage, monkeypatch):
+        """Tokens must be signed with settings.jwt_secret_key, not a hardcoded value."""
+        import jwt as pyjwt
+
+        from pulsar_relay.config import settings
+
+        user = await auth_storage.get_user_by_username("admin")
+
+        monkeypatch.setattr(settings, "jwt_secret_key", "test-key-alpha")
+        token_alpha = create_access_token(user)
+
+        # Decoding with the wrong secret must fail.
+        with pytest.raises(pyjwt.InvalidSignatureError):
+            pyjwt.decode(token_alpha, "different-key", algorithms=["HS256"])
+
+        # Decoding with the configured secret must succeed.
+        decoded = pyjwt.decode(token_alpha, "test-key-alpha", algorithms=["HS256"])
+        assert decoded["sub"] == user.user_id
+
+        # Rotating the configured secret invalidates previously issued tokens.
+        monkeypatch.setattr(settings, "jwt_secret_key", "test-key-beta")
+        assert decode_token(token_alpha) is None
 
 
 class TestUserStorage:
@@ -193,6 +231,69 @@ class TestUserStorage:
         # Verify user is gone
         fetched = await auth_storage.get_user_by_id(user.user_id)
         assert fetched is None
+
+
+class TestFederatedIdentity:
+    """Federated-identity index on the user storage."""
+
+    @pytest.mark.anyio
+    async def test_link_and_lookup(self, auth_storage):
+        from pulsar_relay.auth.models import FederatedIdentity
+
+        user = await auth_storage.get_user_by_username("user")
+        identity = FederatedIdentity(
+            issuer="https://accounts.google.com",
+            sub="g-12345",
+            provider_name="google",
+            email="user@example.com",
+        )
+
+        updated = await auth_storage.add_federated_identity(user.user_id, identity)
+        assert any(fi.sub == "g-12345" for fi in updated.federated_identities)
+
+        # Lookup by (issuer, sub) round-trips.
+        looked_up = await auth_storage.get_user_by_federated_identity(identity.issuer, identity.sub)
+        assert looked_up is not None
+        assert looked_up.user_id == user.user_id
+
+    @pytest.mark.anyio
+    async def test_link_idempotent(self, auth_storage):
+        from pulsar_relay.auth.models import FederatedIdentity
+
+        user = await auth_storage.get_user_by_username("user")
+        identity = FederatedIdentity(
+            issuer="https://accounts.google.com",
+            sub="g-67890",
+            provider_name="google",
+        )
+        await auth_storage.add_federated_identity(user.user_id, identity)
+        await auth_storage.add_federated_identity(user.user_id, identity)
+
+        refreshed = await auth_storage.get_user_by_id(user.user_id)
+        matching = [fi for fi in refreshed.federated_identities if fi.sub == "g-67890"]
+        assert len(matching) == 1
+
+    @pytest.mark.anyio
+    async def test_link_collision_rejected(self, auth_storage):
+        from pulsar_relay.auth.models import FederatedIdentity
+
+        user_a = await auth_storage.get_user_by_username("user")
+        user_b = await auth_storage.get_user_by_username("admin")
+        identity = FederatedIdentity(
+            issuer="https://accounts.google.com",
+            sub="shared-sub",
+            provider_name="google",
+        )
+        await auth_storage.add_federated_identity(user_a.user_id, identity)
+        with pytest.raises(ValueError, match="already linked"):
+            await auth_storage.add_federated_identity(user_b.user_id, identity)
+
+    @pytest.mark.anyio
+    async def test_unknown_identity_returns_none(self, auth_storage):
+        result = await auth_storage.get_user_by_federated_identity(
+            "https://nope.example", "missing"
+        )
+        assert result is None
 
 
 class TestAuthenticationEndpoints:

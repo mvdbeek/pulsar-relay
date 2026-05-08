@@ -10,10 +10,11 @@ import logging
 import os
 from pathlib import Path
 from typing import Any, Literal, Optional
+from urllib.parse import urlparse
 
 import tomli
 import yaml
-from pydantic import Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,90 @@ def load_config_file(config_path: Optional[Path] = None) -> dict[str, Any]:
             raise
 
     return config_data
+
+
+_OIDC_DEFAULT_PERMISSIONS: tuple[str, ...] = ("read", "write")
+
+
+class OIDCProviderConfig(BaseModel):
+    """One configured upstream OIDC provider (Google, Keycloak, GitHub, etc.).
+
+    Either ``discovery_url`` OR all of ``issuer``, ``authorization_endpoint``,
+    ``token_endpoint``, ``jwks_uri`` must be provided. ``userinfo_endpoint`` is
+    optional (we'll fall back to ID-token claims).
+    """
+
+    display_name: str = Field(..., description="Human-friendly label shown to operators")
+    client_id: str = Field(...)
+    client_secret: str = Field(..., description="Set via env var; never check into source")
+    scopes: list[str] = Field(default_factory=lambda: ["openid", "email", "profile"])
+
+    # Either supply a discovery URL...
+    discovery_url: Optional[str] = Field(
+        None, description="OpenID-Connect discovery URL (.well-known/openid-configuration)"
+    )
+
+    # ...or explicit endpoints.
+    issuer: Optional[str] = None
+    authorization_endpoint: Optional[str] = None
+    token_endpoint: Optional[str] = None
+    userinfo_endpoint: Optional[str] = None
+    jwks_uri: Optional[str] = None
+
+    # Claim mapping. Defaults match Google/Keycloak. ``preferred_username``
+    # is also a sensible default for some IdPs.
+    claim_username: str = Field(default="email", description="ID-token/userinfo claim used as the local username")
+    claim_email: str = Field(default="email")
+    claim_sub: str = Field(default="sub")
+
+    @model_validator(mode="after")
+    def _require_discovery_or_endpoints(self) -> "OIDCProviderConfig":
+        if self.discovery_url:
+            return self
+        missing = [
+            name
+            for name in ("issuer", "authorization_endpoint", "token_endpoint", "jwks_uri")
+            if getattr(self, name) is None
+        ]
+        if missing:
+            raise ValueError(
+                "OIDC provider must set either discovery_url, or all of "
+                f"issuer/authorization_endpoint/token_endpoint/jwks_uri (missing: {', '.join(missing)})"
+            )
+        return self
+
+
+class OIDCConfig(BaseModel):
+    """Top-level OIDC configuration."""
+
+    enabled: bool = Field(default=False)
+    base_url: Optional[str] = Field(
+        None,
+        description="Public base URL of the relay (used to build redirect_uri). Required when enabled=true.",
+    )
+    default_permissions: list[Literal["admin", "read", "write"]] = Field(
+        default_factory=lambda: list(_OIDC_DEFAULT_PERMISSIONS),
+        description="Permissions granted to auto-provisioned users on first sign-in",
+    )
+    providers: dict[str, OIDCProviderConfig] = Field(default_factory=dict)
+    state_ttl_seconds: int = Field(default=600, ge=60, le=3600)
+
+    @model_validator(mode="after")
+    def _check_base_url(self) -> "OIDCConfig":
+        if not self.enabled:
+            return self
+        if not self.base_url:
+            raise ValueError("oidc.base_url is required when oidc.enabled=true")
+        parsed = urlparse(self.base_url)
+        if parsed.scheme == "https":
+            return self
+        if parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1"}:
+            # Dev convenience only.
+            logger.warning("OIDC base_url is http://localhost — only acceptable for development")
+            return self
+        raise ValueError(
+            "oidc.base_url must be https:// (http:// only allowed for localhost dev)"
+        )
 
 
 class Settings(BaseSettings):
@@ -124,6 +209,29 @@ class Settings(BaseSettings):
         default="your-secret-key-here-change-in-production",
         description="JWT secret key for token signing (CHANGE IN PRODUCTION!)",
     )
+
+    # Refresh tokens & device flow
+    refresh_token_ttl_days: int = Field(
+        default=90,
+        ge=1,
+        le=365,
+        description="Refresh-token absolute lifetime in days",
+    )
+    device_code_ttl_seconds: int = Field(
+        default=600,
+        ge=60,
+        le=3600,
+        description="Device-authorization-grant code lifetime in seconds",
+    )
+    device_code_poll_interval: int = Field(
+        default=5,
+        ge=1,
+        le=60,
+        description="Minimum poll interval (seconds) returned to device-flow daemons",
+    )
+
+    # OpenID Connect federation
+    oidc: OIDCConfig = Field(default_factory=OIDCConfig)
 
     # Bootstrap Admin (created automatically on first startup if doesn't exist)
     bootstrap_admin_username: Optional[str] = Field(
