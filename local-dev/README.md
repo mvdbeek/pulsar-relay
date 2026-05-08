@@ -45,6 +45,13 @@ First boot of Keycloak takes ~30 seconds while it imports the realm.
 
 ## Try the OIDC flow inside `/docs`
 
+> **Note**: Swagger UI's "Logout" button only clears its own access-token
+> cache; it doesn't sign out of the IdP. To switch users, clear the
+> Keycloak cookies for `localhost:8080` (DevTools → Application → Cookies)
+> and click Authorize again. This is a Swagger UI limitation, not a
+> relay-side bug.
+
+
 Open <http://localhost:9000/docs> and click **Authorize**. You'll see two
 schemes:
 
