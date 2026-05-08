@@ -237,9 +237,7 @@ class TestWebSocketBasics:
         await topic_storage.create_topic(admin.user_id, TopicCreate(topic_name="admins-only-ws", is_public=False))
 
         with client.websocket_connect(f"/ws?token={token}") as websocket:
-            websocket.send_json(
-                {"type": "subscribe", "topics": ["admins-only-ws"], "client_id": "test-client"}
-            )
+            websocket.send_json({"type": "subscribe", "topics": ["admins-only-ws"], "client_id": "test-client"})
 
             response = websocket.receive_json()
 
