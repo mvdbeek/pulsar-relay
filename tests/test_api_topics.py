@@ -305,3 +305,286 @@ class TestGetTopicMessages:
         response = await client.get("/api/v1/topics/order-test/messages?order=invalid")
         assert response.status_code == 400
         assert "order" in response.json()["detail"].lower()
+
+
+class TestTopicAccessControl:
+    """Cross-user access-control tests for the topics API.
+
+    The default `client` fixture is authenticated as the regular `user` account.
+    The `admin` account is used as a second user that owns topics the regular
+    user should not be able to read.
+    """
+
+    async def _admin_client(self, auth_storage):
+        """Build an AsyncClient authenticated as the admin user."""
+        admin_user = await auth_storage.get_user_by_username("admin")
+        admin_token = create_access_token(admin_user)
+        transport = ASGITransport(app=app)
+        return AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+
+    async def test_get_topic_detail_denied_for_other_users_private_topic(self, auth_storage, client):
+        """A regular user gets 403 fetching another user's private topic detail."""
+        async with await self._admin_client(auth_storage) as admin_client:
+            response = await admin_client.post(
+                "/api/v1/topics",
+                json={"topic_name": "admins-private", "is_public": False},
+            )
+            assert response.status_code == 201
+
+        response = await client.get("/api/v1/topics/admins-private")
+        assert response.status_code == 403
+        assert "access denied" in response.json()["detail"].lower()
+
+    async def test_list_topics_excludes_other_users_private_topic(self, auth_storage, client):
+        """GET /api/v1/topics for a non-admin must not include another user's private topic."""
+        async with await self._admin_client(auth_storage) as admin_client:
+            response = await admin_client.post(
+                "/api/v1/topics",
+                json={"topic_name": "admins-hidden", "is_public": False},
+            )
+            assert response.status_code == 201
+
+        # Regular user creates one of their own to confirm filtering doesn't drop everything
+        response = await client.post(
+            "/api/v1/topics",
+            json={"topic_name": "users-own", "is_public": False},
+        )
+        assert response.status_code == 201
+
+        response = await client.get("/api/v1/topics")
+        assert response.status_code == 200
+        names = {t["topic_name"] for t in response.json()}
+        assert "users-own" in names
+        assert "admins-hidden" not in names
+
+    async def test_list_topics_excludes_other_users_public_topic(self, auth_storage, client):
+        """Public topics owned by others are not returned by list_user_topics for non-admins.
+
+        This documents the current behavior: list_user_topics only returns owned +
+        explicitly-granted topics. A user can still GET a specific public topic by name.
+        """
+        async with await self._admin_client(auth_storage) as admin_client:
+            response = await admin_client.post(
+                "/api/v1/topics",
+                json={"topic_name": "admins-public", "is_public": True},
+            )
+            assert response.status_code == 201
+
+        response = await client.get("/api/v1/topics")
+        assert response.status_code == 200
+        names = {t["topic_name"] for t in response.json()}
+        assert "admins-public" not in names
+
+    async def test_get_topic_detail_allowed_for_other_users_public_topic(self, auth_storage, client):
+        """Any authenticated user can read a public topic owned by someone else."""
+        async with await self._admin_client(auth_storage) as admin_client:
+            response = await admin_client.post(
+                "/api/v1/topics",
+                json={"topic_name": "admins-public-readable", "is_public": True},
+            )
+            assert response.status_code == 201
+
+        response = await client.get("/api/v1/topics/admins-public-readable")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["topic_name"] == "admins-public-readable"
+        # Non-owner must not see the allow-list
+        assert body["allowed_user_ids"] is None
+
+    async def test_get_messages_allowed_for_other_users_public_topic(self, auth_storage, client):
+        """A non-owner can read messages from a public topic."""
+        async with await self._admin_client(auth_storage) as admin_client:
+            response = await admin_client.post(
+                "/api/v1/topics",
+                json={"topic_name": "admins-public-msgs", "is_public": True},
+            )
+            assert response.status_code == 201
+            response = await admin_client.post(
+                "/api/v1/messages",
+                json={"topic": "admins-public-msgs", "payload": {"hello": "world"}},
+            )
+            assert response.status_code == 201
+
+        response = await client.get("/api/v1/topics/admins-public-msgs/messages")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["messages"]) == 1
+        assert data["messages"][0]["payload"] == {"hello": "world"}
+
+    async def test_granted_user_can_read_private_topic(self, auth_storage, client):
+        """A user explicitly granted access can read another user's private topic."""
+        # Resolve the regular user's id
+        user = await auth_storage.get_user_by_username("user")
+
+        async with await self._admin_client(auth_storage) as admin_client:
+            response = await admin_client.post(
+                "/api/v1/topics",
+                json={"topic_name": "shared-private", "is_public": False},
+            )
+            assert response.status_code == 201
+
+            # Regular user is denied before grant
+            denied = await client.get("/api/v1/topics/shared-private")
+            assert denied.status_code == 403
+
+            # Owner grants access
+            grant = await admin_client.post(
+                "/api/v1/topics/shared-private/permissions",
+                json={"user_id": user.user_id},
+            )
+            assert grant.status_code == 201
+
+            # Owner publishes a message
+            response = await admin_client.post(
+                "/api/v1/messages",
+                json={"topic": "shared-private", "payload": {"secret": True}},
+            )
+            assert response.status_code == 201
+
+        # After grant, the regular user can access detail and messages
+        response = await client.get("/api/v1/topics/shared-private")
+        assert response.status_code == 200
+        # Granted (non-owner) caller must not see the allow-list
+        assert response.json()["allowed_user_ids"] is None
+
+        response = await client.get("/api/v1/topics/shared-private/messages")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["messages"]) == 1
+        assert data["messages"][0]["payload"] == {"secret": True}
+
+        # And it now appears in their topic listing
+        response = await client.get("/api/v1/topics")
+        assert response.status_code == 200
+        names = {t["topic_name"] for t in response.json()}
+        assert "shared-private" in names
+
+    async def test_publish_denied_for_other_users_private_topic(self, auth_storage, client):
+        """A regular user must NOT be able to publish to another user's private topic."""
+        async with await self._admin_client(auth_storage) as admin_client:
+            response = await admin_client.post(
+                "/api/v1/topics",
+                json={"topic_name": "owner-only", "is_public": False},
+            )
+            assert response.status_code == 201
+
+        response = await client.post(
+            "/api/v1/messages",
+            json={"topic": "owner-only", "payload": {"injected": True}},
+        )
+        assert response.status_code == 403
+        assert "owner-only" in response.json()["detail"]
+
+    async def test_bulk_publish_denied_for_other_users_private_topic(self, auth_storage, client):
+        """Bulk publish must also reject when any topic is owned by another user."""
+        async with await self._admin_client(auth_storage) as admin_client:
+            response = await admin_client.post(
+                "/api/v1/topics",
+                json={"topic_name": "bulk-owner-only", "is_public": False},
+            )
+            assert response.status_code == 201
+
+        response = await client.post(
+            "/api/v1/messages/bulk",
+            json={"messages": [{"topic": "bulk-owner-only", "payload": {"x": 1}}]},
+        )
+        assert response.status_code == 403
+        assert "bulk-owner-only" in response.json()["detail"]
+
+    async def test_publish_denied_for_granted_user(self, auth_storage, client):
+        """Grants are read-only; granted users cannot publish."""
+        user = await auth_storage.get_user_by_username("user")
+
+        async with await self._admin_client(auth_storage) as admin_client:
+            response = await admin_client.post(
+                "/api/v1/topics",
+                json={"topic_name": "shared-readonly", "is_public": False},
+            )
+            assert response.status_code == 201
+
+            grant = await admin_client.post(
+                "/api/v1/topics/shared-readonly/permissions",
+                json={"user_id": user.user_id},
+            )
+            assert grant.status_code == 201
+
+        # Granted user can read
+        response = await client.get("/api/v1/topics/shared-readonly")
+        assert response.status_code == 200
+
+        # But cannot publish
+        response = await client.post(
+            "/api/v1/messages",
+            json={"topic": "shared-readonly", "payload": {"x": 1}},
+        )
+        assert response.status_code == 403
+
+    async def test_publish_denied_for_public_topic_non_owner(self, auth_storage, client):
+        """Public topics allow read but not write for non-owners."""
+        async with await self._admin_client(auth_storage) as admin_client:
+            response = await admin_client.post(
+                "/api/v1/topics",
+                json={"topic_name": "public-read-only", "is_public": True},
+            )
+            assert response.status_code == 201
+
+        # Non-owner can read
+        response = await client.get("/api/v1/topics/public-read-only")
+        assert response.status_code == 200
+
+        # But cannot publish
+        response = await client.post(
+            "/api/v1/messages",
+            json={"topic": "public-read-only", "payload": {"x": 1}},
+        )
+        assert response.status_code == 403
+
+    async def test_owner_can_publish_to_own_topic(self, auth_storage, client):
+        """Sanity: owner can still publish."""
+        # Regular user creates and publishes to their own topic
+        response = await client.post(
+            "/api/v1/topics",
+            json={"topic_name": "users-own-topic", "is_public": False},
+        )
+        assert response.status_code == 201
+
+        response = await client.post(
+            "/api/v1/messages",
+            json={"topic": "users-own-topic", "payload": {"hello": "self"}},
+        )
+        assert response.status_code == 201
+
+    async def test_admin_can_publish_to_any_topic(self, auth_storage, client):
+        """Sanity: admin write bypass still works."""
+        # Regular user creates a private topic
+        response = await client.post(
+            "/api/v1/topics",
+            json={"topic_name": "users-private", "is_public": False},
+        )
+        assert response.status_code == 201
+
+        async with await self._admin_client(auth_storage) as admin_client:
+            response = await admin_client.post(
+                "/api/v1/messages",
+                json={"topic": "users-private", "payload": {"from": "admin"}},
+            )
+            assert response.status_code == 201
+
+    async def test_publish_to_new_topic_auto_creates_with_caller_as_owner(self, auth_storage, client):
+        """Publishing to a non-existent topic auto-creates it with the caller as owner."""
+        response = await client.post(
+            "/api/v1/messages",
+            json={"topic": "auto-created", "payload": {"x": 1}},
+        )
+        assert response.status_code == 201
+
+        # Caller is now the owner and can read
+        response = await client.get("/api/v1/topics/auto-created")
+        assert response.status_code == 200
+        body = response.json()
+        user = await auth_storage.get_user_by_username("user")
+        assert body["owner_id"] == user.user_id

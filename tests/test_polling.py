@@ -365,3 +365,25 @@ class TestPollingEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data["messages"], list)
+
+    @pytest.mark.anyio
+    async def test_poll_denied_for_other_users_private_topic(self, test_client, auth_token, auth_storage):
+        """Polling a private topic owned by another user must return 403."""
+        from pulsar_relay.auth.models import TopicCreate
+
+        admin = await auth_storage.get_user_by_username("admin")
+        topic_storage = app.state.topic_storage
+        await topic_storage.create_topic(admin.user_id, TopicCreate(topic_name="admins-private-poll", is_public=False))
+
+        response = test_client.post(
+            "/messages/poll",
+            json={
+                "topics": ["admins-private-poll"],
+                "timeout": 1,
+            },
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+
+        assert response.status_code == 403
+        assert "access denied" in response.json()["detail"].lower()
+        assert "admins-private-poll" in response.json()["detail"]

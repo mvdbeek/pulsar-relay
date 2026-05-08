@@ -279,6 +279,9 @@ def require_topic_access(topic: str, permission_type: Literal["read", "write"]):
 async def get_or_create_topic(topic_name: str, current_user: User):
     """Get or create a topic, setting the current user as owner.
 
+    If the topic already exists, the caller must have write access; otherwise
+    the topic is created with the current user as owner.
+
     This function handles concurrent creation attempts gracefully by retrying
     the get operation if the create fails due to the topic already existing.
 
@@ -290,7 +293,8 @@ async def get_or_create_topic(topic_name: str, current_user: User):
         Topic instance
 
     Raises:
-        HTTPException: If topic creation fails
+        HTTPException: 403 if topic exists and user lacks write access; 500 on
+            unexpected creation failure.
     """
     from pulsar_relay.auth.models import TopicCreate
 
@@ -300,6 +304,17 @@ async def get_or_create_topic(topic_name: str, current_user: User):
     topic = await topic_storage.get_topic(topic_name)
 
     if topic:
+        can_write = await topic_storage.user_can_access(
+            topic_name=topic_name,
+            user_id=current_user.user_id,
+            permission_type="write",
+            user_permissions=current_user.permissions,
+        )
+        if not can_write:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied to topic '{topic_name}' (requires write permission)",
+            )
         return topic
 
     # Topic doesn't exist - try to create it with current user as owner
@@ -325,6 +340,17 @@ async def get_or_create_topic(topic_name: str, current_user: User):
             logger.debug(f"Topic '{topic_name}' was created by concurrent request, retrying get")
             topic = await topic_storage.get_topic(topic_name)
             if topic:
+                can_write = await topic_storage.user_can_access(
+                    topic_name=topic_name,
+                    user_id=current_user.user_id,
+                    permission_type="write",
+                    user_permissions=current_user.permissions,
+                )
+                if not can_write:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"Access denied to topic '{topic_name}' (requires write permission)",
+                    )
                 return topic
         # Still couldn't get it, raise the error
         logger.exception(f"Failed to get or create topic '{topic_name}': {e}")

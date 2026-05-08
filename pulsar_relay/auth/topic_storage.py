@@ -280,12 +280,16 @@ class InMemoryTopicStorage(TopicStorage):
         if topic.owner_id == user_id:
             return True
 
-        # Check if user has been granted access
+        # Non-owners can only ever read; writes are owner-only.
+        if permission_type != "read":
+            return False
+
+        # Granted users can read
         if user_id in topic.allowed_user_ids:
             return True
 
         # Public topics allow read access
-        if permission_type == "read" and topic.is_public:
+        if topic.is_public:
             return True
 
         return False
@@ -575,14 +579,18 @@ class ValkeyTopicStorage(TopicStorage):
         if topic.owner_id == user_id:
             return True
 
-        # Check if user has been granted access
+        # Non-owners can only ever read; writes are owner-only.
+        if permission_type != "read":
+            return False
+
+        # Granted users can read
         allowed_users_key = self._get_topic_allowed_users_key(topic_name)
         is_member = await self._client.sismember(allowed_users_key, user_id)
         if is_member:
             return True
 
         # Public topics allow read access
-        if permission_type == "read" and topic.is_public:
+        if topic.is_public:
             return True
 
         return False

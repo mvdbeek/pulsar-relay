@@ -227,6 +227,26 @@ class TestWebSocketBasics:
             assert response["type"] == "error"
             assert response["code"] == "UNKNOWN_MESSAGE_TYPE"
 
+    async def test_websocket_subscribe_denied_for_other_users_private_topic(self, setup_app, auth_storage):
+        """Subscribing to a private topic owned by another user must be rejected."""
+        client = setup_app["client"]
+        token = setup_app["token"]
+        topic_storage = setup_app["topic_storage"]
+
+        admin = await auth_storage.get_user_by_username("admin")
+        await topic_storage.create_topic(admin.user_id, TopicCreate(topic_name="admins-only-ws", is_public=False))
+
+        with client.websocket_connect(f"/ws?token={token}") as websocket:
+            websocket.send_json(
+                {"type": "subscribe", "topics": ["admins-only-ws"], "client_id": "test-client"}
+            )
+
+            response = websocket.receive_json()
+
+            assert response["type"] == "error"
+            assert response["code"] == "SUBSCRIPTION_ERROR"
+            assert "admins-only-ws" in response["message"]
+
 
 class TestWebSocketMessageDelivery:
     """Tests for message delivery via WebSocket."""
