@@ -236,12 +236,7 @@ def _swagger_init_oauth() -> dict:
         "clientSecret": provider_cfg.client_secret,
         "usePkceWithAuthorizationCodeGrant": True,
         "scopes": " ".join(provider_cfg.scopes),
-        # ``prompt=login`` forces the IdP to re-prompt for credentials on every
-        # Authorize click, even when an SSO session cookie is still set in the
-        # browser. Without this, Swagger's "Logout" only clears its own local
-        # token and the next Authorize click silently re-uses the IdP session,
-        # which is surprising when an operator is trying to switch accounts.
-        "additionalQueryStringParams": {"prompt": "login"},
+        "additionalQueryStringParams": {"_oidc_provider": name},
     }
 
 
