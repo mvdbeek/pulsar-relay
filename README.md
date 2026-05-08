@@ -24,7 +24,7 @@ git clone https://github.com/mvdbeek/pulsar-relay.git
 cd pulsar-relay
 
 # Set up configuration
-cp config.example.yaml config.yaml
+cp config.yaml.example config.yaml
 # Edit config.yaml with your settings
 
 # Start Valkey (if not already running)
@@ -76,29 +76,15 @@ Pulsar Relay uses JWT-based authentication. Before sending or receiving messages
 
 #### Creating the First Admin User
 
-On first deployment, you'll need to create an admin user directly in the storage backend. For development, you can use the test fixture function:
+The first admin user is bootstrapped on startup via environment variables. Set these before launching the server and the user will be created (or its password updated) automatically:
 
-```python
-# create_admin.py
-import asyncio
-from app.auth.storage import InMemoryUserStorage
-from app.auth.models import UserCreate
-
-async def create_admin():
-    storage = InMemoryUserStorage()
-    user_data = UserCreate(
-        username="admin",
-        email="admin@example.com",
-        password="your-secure-password",
-        permissions=["admin", "read", "write"]
-    )
-    user = await storage.create_user(user_data)
-    print(f"Created admin user: {user.username}")
-
-asyncio.run(create_admin())
+```bash
+export PULSAR_BOOTSTRAP_ADMIN_USERNAME=admin
+export PULSAR_BOOTSTRAP_ADMIN_PASSWORD=your-secure-password
+export PULSAR_BOOTSTRAP_ADMIN_EMAIL=admin@example.com
 ```
 
-For production deployments with Valkey storage, contact your system administrator to create the initial admin user.
+Once the server is running, you can rotate the admin password by changing `PULSAR_BOOTSTRAP_ADMIN_PASSWORD` and restarting.
 
 #### Logging In
 
@@ -318,8 +304,6 @@ curl -X PUT http://localhost:8080/api/v1/topics/notifications \
 
 ## Architecture
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed architecture documentation.
-
 ### High-Level Overview
 
 ```
@@ -335,32 +319,24 @@ Producers → Ingestion API → Storage (Memory + Valkey Streams) → WebSocket/
 
 ## Configuration
 
-Configuration is managed via YAML file or environment variables:
+Configuration is loaded from environment variables (prefixed `PULSAR_`), a `config.toml` / `config.yaml` file, or built-in defaults — in that order of precedence. The HTTP port and worker count come from uvicorn flags (`--port`, `--workers`), not from config.
+
+A minimal YAML config:
 
 ```yaml
-server:
-  http_port: 8080
-  read_timeout: 30s
-  write_timeout: 30s
-
-valkey:
-  host: localhost
-  port: 6379
-  password: ""
-  db: 0
-  pool_size: 100
-  # Persistence settings (configured in valkey.conf)
-  # appendonly yes
-  # appendfsync everysec
-
-storage:
-  persistent_tier_retention: 24h  # Valkey streams retention
-  max_messages_per_topic: 1000000 # Trim streams at this count
+storage_backend: valkey
+valkey_host: localhost
+valkey_port: 6379
+valkey_use_tls: false
+persistent_tier_retention: 86400   # seconds; Valkey stream retention
+max_messages_per_topic: 1000000    # per-topic trim threshold
+log_level: INFO
+jwt_secret_key: your-secure-secret-key-here
 ```
 
-## API Reference
+See [docs/CONFIGURATION.md](./docs/CONFIGURATION.md) for the full reference.
 
-See [API.md](./API.md) for complete API documentation.
+## API Reference
 
 ### Authentication API
 
@@ -465,26 +441,6 @@ pytest
 # Run linting
 tox -e lint,mypy
 ```
-
-### Creating a Release
-
-For maintainers: See [RELEASE.md](./RELEASE.md) for detailed instructions on creating a new release.
-
-Quick summary:
-1. Update version in `pyproject.toml`
-2. Commit and push changes
-3. Create and push a version tag: `git tag v0.2.0 && git push origin v0.2.0`
-4. GitHub Actions will automatically publish to PyPI and Docker registries
-
-## Contributing
-
-Contributions are welcome! Please read [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Write tests
-5. Submit a pull request
 
 ## License
 

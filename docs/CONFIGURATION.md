@@ -286,9 +286,9 @@ spec:
 The application logs its configuration on startup:
 
 ```
-INFO:app.config:Configuration loaded successfully
-INFO:app.config:  Storage backend: valkey
-INFO:app.config:  Log level: INFO
+INFO:pulsar_relay.config:Configuration loaded successfully
+INFO:pulsar_relay.config:  Storage backend: valkey
+INFO:pulsar_relay.config:  Log level: INFO
 ```
 
 ### Common Issues
@@ -314,7 +314,7 @@ INFO:app.config:  Log level: INFO
 ## Testing Configuration
 
 ```python
-from app.config import load_settings
+from pulsar_relay.config import load_settings
 
 # Test loading from specific file
 settings = load_settings(config_path="config.test.toml")

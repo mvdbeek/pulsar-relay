@@ -16,8 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Copy application files
-COPY pyproject.toml ./
-COPY app/ ./app/
+COPY pyproject.toml README.md MANIFEST.in ./
+COPY pulsar_relay/ ./pulsar_relay/
 
 # Install Python dependencies and application
 RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed .

@@ -120,9 +120,6 @@ The Pulsar Relay demonstrates excellent performance for message ingestion and de
 2. **Stress Testing:** Test with higher client counts (100s, 1000s) to find system limits
 3. **Monitoring:** Set up Prometheus + Grafana dashboards for production monitoring
 4. **Rate Limiting:** Implement rate limiting with slowapi to prevent DoS
-5. **Authentication:** Add JWT authentication for production use
-6. **Horizontal Scaling:** Consider Redis Pub/Sub for cross-instance messaging
-7. **Valkey Integration:** Implement the Valkey storage backend for persistence
 
 ## Running the Benchmarks
 
@@ -140,4 +137,4 @@ python benchmarks/run_benchmarks.py
 
 - Benchmark Suite: `benchmarks/run_benchmarks.py`
 - Test Results: This document
-- Source Code: `app/` directory
+- Source Code: `pulsar_relay/` directory
