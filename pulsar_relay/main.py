@@ -273,12 +273,13 @@ def _custom_openapi():
     if auth_urls:
         components = schema.setdefault("components", {})
         schemes = components.setdefault("securitySchemes", {})
+        oidc_entries: list[dict] = []
         for name, auth_url in auth_urls.items():
             provider_cfg = settings.oidc.providers[name]
             scheme_name = f"OIDC_{name}"
             schemes[scheme_name] = {
                 "type": "oauth2",
-                "description": f"Sign in with {provider_cfg.display_name}",
+                "description": provider_cfg.display_name,
                 "flows": {
                     "authorizationCode": {
                         "authorizationUrl": auth_url,
@@ -288,19 +289,33 @@ def _custom_openapi():
                     }
                 },
             }
-        # Make the OIDC schemes acceptable for every operation by adding them
-        # to the global security list alongside the existing password scheme.
-        global_security = schema.setdefault("security", [])
-        existing_pw = next(
-            (item for item in global_security if "OAuth2PasswordBearer" in item),
-            {"OAuth2PasswordBearer": []},
-        )
-        if existing_pw not in global_security:
-            global_security.append(existing_pw)
-        for name in auth_urls:
-            entry = {f"OIDC_{name}": list(settings.oidc.providers[name].scopes)}
-            if entry not in global_security:
-                global_security.append(entry)
+            oidc_entries.append({scheme_name: list(provider_cfg.scopes)})
+
+        # FastAPI emits per-operation ``security`` blocks listing only
+        # OAuth2PasswordBearer (the scheme attached to each endpoint's
+        # dependencies). An OpenAPI top-level ``security`` doesn't help —
+        # operation-level security replaces it. Walk every operation and
+        # offer OIDC_<provider> alongside the password scheme so an
+        # operator can authorize once via either scheme and have Swagger
+        # actually send the token.
+        for path_item in schema.get("paths", {}).values():
+            if not isinstance(path_item, dict):
+                continue
+            for op in path_item.values():
+                if not isinstance(op, dict):
+                    continue
+                op_security = op.get("security")
+                if not op_security:
+                    continue
+                requires_pw = any(
+                    isinstance(entry, dict) and "OAuth2PasswordBearer" in entry
+                    for entry in op_security
+                )
+                if not requires_pw:
+                    continue
+                for entry in oidc_entries:
+                    if entry not in op_security:
+                        op_security.append(entry)
 
     app.openapi_schema = schema
     return schema
