@@ -13,7 +13,6 @@ import logging
 import secrets as secrets_mod
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 from uuid import uuid4
 
 from pulsar_relay.auth.models import RefreshToken, RefreshTokenRevokedReason
@@ -48,8 +47,8 @@ class RefreshTokenStorage(ABC):
         *,
         user_id: str,
         ttl: timedelta,
-        parent_jti: Optional[str] = None,
-        client_hint: Optional[str] = None,
+        parent_jti: str | None = None,
+        client_hint: str | None = None,
     ) -> tuple[RefreshToken, str]:
         """Issue a new refresh token.
 
@@ -59,7 +58,7 @@ class RefreshTokenStorage(ABC):
         pass
 
     @abstractmethod
-    async def get_by_jti(self, jti: str) -> Optional[RefreshToken]:
+    async def get_by_jti(self, jti: str) -> RefreshToken | None:
         pass
 
     @abstractmethod
@@ -105,8 +104,8 @@ class InMemoryRefreshTokenStorage(RefreshTokenStorage):
         *,
         user_id: str,
         ttl: timedelta,
-        parent_jti: Optional[str] = None,
-        client_hint: Optional[str] = None,
+        parent_jti: str | None = None,
+        client_hint: str | None = None,
     ) -> tuple[RefreshToken, str]:
         jti, secret = _new_jti_secret()
         now = _utcnow()
@@ -123,7 +122,7 @@ class InMemoryRefreshTokenStorage(RefreshTokenStorage):
         self._user_index.setdefault(user_id, set()).add(jti)
         return record, f"{jti}.{secret}"
 
-    async def get_by_jti(self, jti: str) -> Optional[RefreshToken]:
+    async def get_by_jti(self, jti: str) -> RefreshToken | None:
         return self._tokens.get(jti)
 
     async def mark_revoked(self, jti: str, reason: RefreshTokenRevokedReason) -> None:
@@ -153,9 +152,7 @@ class InMemoryRefreshTokenStorage(RefreshTokenStorage):
                 revoked += 1
         return revoked
 
-    async def list_for_user(
-        self, user_id: str, *, include_revoked: bool = False
-    ) -> list[RefreshToken]:
+    async def list_for_user(self, user_id: str, *, include_revoked: bool = False) -> list[RefreshToken]:
         result = []
         for jti in self._user_index.get(user_id, set()):
             token = self._tokens.get(jti)
@@ -238,8 +235,8 @@ class ValkeyRefreshTokenStorage(RefreshTokenStorage):
         *,
         user_id: str,
         ttl: timedelta,
-        parent_jti: Optional[str] = None,
-        client_hint: Optional[str] = None,
+        parent_jti: str | None = None,
+        client_hint: str | None = None,
     ) -> tuple[RefreshToken, str]:
         jti, secret = _new_jti_secret()
         now = _utcnow()
@@ -256,7 +253,7 @@ class ValkeyRefreshTokenStorage(RefreshTokenStorage):
         await self._client.sadd(self._user_key(user_id), [jti])
         return record, f"{jti}.{secret}"
 
-    async def get_by_jti(self, jti: str) -> Optional[RefreshToken]:
+    async def get_by_jti(self, jti: str) -> RefreshToken | None:
         raw = await self._client.hgetall(self._token_key(jti))
         if not raw:
             return None
@@ -293,9 +290,7 @@ class ValkeyRefreshTokenStorage(RefreshTokenStorage):
                 revoked += 1
         return revoked
 
-    async def list_for_user(
-        self, user_id: str, *, include_revoked: bool = False
-    ) -> list[RefreshToken]:
+    async def list_for_user(self, user_id: str, *, include_revoked: bool = False) -> list[RefreshToken]:
         jti_bytes = await self._client.smembers(self._user_key(user_id))
         result = []
         for raw in jti_bytes:

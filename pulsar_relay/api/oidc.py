@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
-from typing import Optional
 
 from fastapi import APIRouter, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -57,8 +56,8 @@ async def list_providers() -> list[OIDCProviderSummary]:
 async def start_oidc_login(
     provider: str,
     request: Request,
-    next: Optional[str] = None,
-    device_user_code: Optional[str] = None,
+    next: str | None = None,
+    device_user_code: str | None = None,
 ) -> RedirectResponse:
     """Begin an OIDC authorization-code flow for a provider.
 
@@ -95,9 +94,7 @@ async def start_oidc_login(
         )
     except OIDCError as exc:
         logger.exception("Failed to build auth URL for provider %s: %s", provider, exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail="OIDC provider unreachable"
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="OIDC provider unreachable") from exc
 
     return RedirectResponse(auth_url, status_code=status.HTTP_302_FOUND)
 
@@ -116,10 +113,10 @@ The pulsar daemon will pick up the credential automatically.</p>
 @router.get("/{provider}/callback")
 async def oidc_callback(
     provider: str,
-    code: Optional[str] = None,
-    state: Optional[str] = None,
-    error: Optional[str] = None,
-    error_description: Optional[str] = None,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
 ):
     """Receive an authorization-code redirect from the IdP.
 
@@ -135,20 +132,14 @@ async def oidc_callback(
             detail=f"OIDC error: {error}: {error_description or ''}".strip(),
         )
     if not code or not state:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Missing code or state"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing code or state")
 
     state_storage = get_oidc_state_storage()
     state_record = await state_storage.consume(state)
     if state_record is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired state"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired state")
     if state_record.provider_name != provider:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="State/provider mismatch"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="State/provider mismatch")
 
     clients = get_oidc_clients()
     client = clients.get(provider)
@@ -164,9 +155,7 @@ async def oidc_callback(
         claims = await client.validate_id_token(token_set.id_token, nonce=state_record.nonce)
     except OIDCError as exc:
         logger.warning("OIDC callback failed for provider=%s: %s", provider, exc)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=f"OIDC validation failed: {exc}"
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"OIDC validation failed: {exc}") from exc
 
     user_storage = get_user_storage()
     user = await login_or_provision_oidc_user(
@@ -204,9 +193,9 @@ async def swagger_token_exchange(
     grant_type: str = Form(...),
     code: str = Form(...),
     redirect_uri: str = Form(...),
-    code_verifier: Optional[str] = Form(None),
-    client_id: Optional[str] = Form(None),
-    client_secret: Optional[str] = Form(None),  # noqa: ARG001 — accepted but ignored
+    code_verifier: str | None = Form(None),
+    client_id: str | None = Form(None),
+    client_secret: str | None = Form(None),  # noqa: ARG001 — accepted but ignored
 ) -> JSONResponse:
     """Exchange an OIDC authorization code for a *relay-issued* JWT.
 
@@ -231,9 +220,7 @@ async def swagger_token_exchange(
     clients = get_oidc_clients()
     oidc_client = clients.get(provider)
     if oidc_client is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"Unknown OIDC provider: {provider}"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Unknown OIDC provider: {provider}")
     if not code_verifier:
         return JSONResponse(
             {

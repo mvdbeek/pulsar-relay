@@ -203,14 +203,11 @@ class InMemoryUserStorage(UserStorage):
 
         existing_owner = self._federated_index.get((identity.issuer, identity.sub))
         if existing_owner is not None and existing_owner != user_id:
-            raise ValueError(
-                f"Federated identity {identity.issuer}/{identity.sub} already linked to another user"
-            )
+            raise ValueError(f"Federated identity {identity.issuer}/{identity.sub} already linked to another user")
 
         # Idempotent: skip if this identity is already attached.
         already_linked = any(
-            fi.issuer == identity.issuer and fi.sub == identity.sub
-            for fi in user.federated_identities
+            fi.issuer == identity.issuer and fi.sub == identity.sub for fi in user.federated_identities
         )
         if not already_linked:
             user.federated_identities.append(identity)
@@ -330,9 +327,7 @@ class ValkeyUserStorage(UserStorage):
                 "created_at": user.created_at.isoformat(),
                 "permissions": json.dumps(user.permissions),
                 "owned_topics": json.dumps(user.owned_topics),
-                "federated_identities": json.dumps(
-                    [fi.model_dump(mode="json") for fi in user.federated_identities]
-                ),
+                "federated_identities": json.dumps([fi.model_dump(mode="json") for fi in user.federated_identities]),
             }
 
             await self._client.hset(user_key, user_hash)
@@ -424,9 +419,7 @@ class ValkeyUserStorage(UserStorage):
             "created_at": user.created_at.isoformat(),
             "permissions": json.dumps(user.permissions),
             "owned_topics": json.dumps(user.owned_topics),
-            "federated_identities": json.dumps(
-                [fi.model_dump(mode="json") for fi in user.federated_identities]
-            ),
+            "federated_identities": json.dumps([fi.model_dump(mode="json") for fi in user.federated_identities]),
         }
 
         await self._client.hset(user_key, user_hash)
@@ -470,9 +463,7 @@ class ValkeyUserStorage(UserStorage):
 
     async def get_user_by_federated_identity(self, issuer: str, sub: str) -> Optional[User]:
         fed_index_key = self._get_federated_index_key()
-        user_id_bytes = await self._client.hget(
-            fed_index_key, self._federated_index_field(issuer, sub)
-        )
+        user_id_bytes = await self._client.hget(fed_index_key, self._federated_index_field(issuer, sub))
         if not user_id_bytes:
             return None
         return await self.get_user_by_id(user_id_bytes.decode("utf-8"))
@@ -493,18 +484,14 @@ class ValkeyUserStorage(UserStorage):
             "created_at": user.created_at.isoformat(),
             "permissions": json.dumps(user.permissions),
             "owned_topics": json.dumps(user.owned_topics),
-            "federated_identities": json.dumps(
-                [fi.model_dump(mode="json") for fi in user.federated_identities]
-            ),
+            "federated_identities": json.dumps([fi.model_dump(mode="json") for fi in user.federated_identities]),
         }
         await self._client.hset(user_key, user_hash)
 
         if user.federated_identities:
             fed_index_key = self._get_federated_index_key()
             for fi in user.federated_identities:
-                await self._client.hsetnx(
-                    fed_index_key, self._federated_index_field(fi.issuer, fi.sub), user.user_id
-                )
+                await self._client.hsetnx(fed_index_key, self._federated_index_field(fi.issuer, fi.sub), user.user_id)
         return user
 
     async def add_federated_identity(self, user_id: str, identity: FederatedIdentity) -> User:
@@ -522,14 +509,11 @@ class ValkeyUserStorage(UserStorage):
             existing = await self._client.hget(fed_index_key, field)
             existing_owner = existing.decode("utf-8") if existing else None
             if existing_owner != user_id:
-                raise ValueError(
-                    f"Federated identity {identity.issuer}/{identity.sub} already linked to another user"
-                )
+                raise ValueError(f"Federated identity {identity.issuer}/{identity.sub} already linked to another user")
 
         # Idempotent: re-linking the same identity is a no-op on the user record.
         already_linked = any(
-            fi.issuer == identity.issuer and fi.sub == identity.sub
-            for fi in user.federated_identities
+            fi.issuer == identity.issuer and fi.sub == identity.sub for fi in user.federated_identities
         )
         if not already_linked:
             user.federated_identities.append(identity)

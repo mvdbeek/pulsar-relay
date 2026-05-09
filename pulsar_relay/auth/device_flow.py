@@ -16,7 +16,6 @@ import logging
 import secrets as secrets_mod
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 from pulsar_relay.auth.models import DeviceCode
 
@@ -59,7 +58,7 @@ class DeviceCodeStorage(ABC):
         verification_uri_complete_template: str,
         ttl: timedelta,
         interval: int = 5,
-        client_hint: Optional[str] = None,
+        client_hint: str | None = None,
     ) -> tuple[DeviceCode, str]:
         """Issue a new device-code session.
 
@@ -69,12 +68,12 @@ class DeviceCodeStorage(ABC):
         pass
 
     @abstractmethod
-    async def get_by_device_code(self, device_code: str) -> Optional[DeviceCode]:
+    async def get_by_device_code(self, device_code: str) -> DeviceCode | None:
         """Look up a session by the plaintext device_code (hashes internally)."""
         pass
 
     @abstractmethod
-    async def get_by_user_code(self, user_code: str) -> Optional[DeviceCode]:
+    async def get_by_user_code(self, user_code: str) -> DeviceCode | None:
         pass
 
     @abstractmethod
@@ -83,16 +82,16 @@ class DeviceCodeStorage(ABC):
         pass
 
     @abstractmethod
-    async def approve(self, user_code: str, user_id: str) -> Optional[DeviceCode]:
+    async def approve(self, user_code: str, user_id: str) -> DeviceCode | None:
         """Mark the session approved; returns the updated record (or None)."""
         pass
 
     @abstractmethod
-    async def deny(self, user_code: str) -> Optional[DeviceCode]:
+    async def deny(self, user_code: str) -> DeviceCode | None:
         pass
 
     @abstractmethod
-    async def consume(self, device_code: str) -> Optional[DeviceCode]:
+    async def consume(self, device_code: str) -> DeviceCode | None:
         """Atomically delete the record and return its last state.
 
         Used after the daemon successfully exchanges device_code for tokens
@@ -117,7 +116,7 @@ class InMemoryDeviceCodeStorage(DeviceCodeStorage):
         verification_uri_complete_template: str,
         ttl: timedelta,
         interval: int,
-        client_hint: Optional[str],
+        client_hint: str | None,
     ) -> tuple[DeviceCode, str]:
         # Avoid user_code collisions with active sessions.
         for _ in range(10):
@@ -148,7 +147,7 @@ class InMemoryDeviceCodeStorage(DeviceCodeStorage):
         verification_uri_complete_template: str,
         ttl: timedelta,
         interval: int = 5,
-        client_hint: Optional[str] = None,
+        client_hint: str | None = None,
     ) -> tuple[DeviceCode, str]:
         record, device_code = self._build(
             verification_uri=verification_uri,
@@ -161,10 +160,10 @@ class InMemoryDeviceCodeStorage(DeviceCodeStorage):
         self._user_code_index[record.user_code] = record.device_code_hash
         return record, device_code
 
-    async def get_by_device_code(self, device_code: str) -> Optional[DeviceCode]:
+    async def get_by_device_code(self, device_code: str) -> DeviceCode | None:
         return self._records.get(_hash_device_code(device_code))
 
-    async def get_by_user_code(self, user_code: str) -> Optional[DeviceCode]:
+    async def get_by_user_code(self, user_code: str) -> DeviceCode | None:
         h = self._user_code_index.get(user_code.upper())
         if h is None:
             return None
@@ -173,7 +172,7 @@ class InMemoryDeviceCodeStorage(DeviceCodeStorage):
     async def update(self, record: DeviceCode) -> None:
         self._records[record.device_code_hash] = record
 
-    async def approve(self, user_code: str, user_id: str) -> Optional[DeviceCode]:
+    async def approve(self, user_code: str, user_id: str) -> DeviceCode | None:
         record = await self.get_by_user_code(user_code)
         if record is None or record.status != "pending":
             return None
@@ -186,7 +185,7 @@ class InMemoryDeviceCodeStorage(DeviceCodeStorage):
         await self.update(record)
         return record
 
-    async def deny(self, user_code: str) -> Optional[DeviceCode]:
+    async def deny(self, user_code: str) -> DeviceCode | None:
         record = await self.get_by_user_code(user_code)
         if record is None or record.status != "pending":
             return None
@@ -194,7 +193,7 @@ class InMemoryDeviceCodeStorage(DeviceCodeStorage):
         await self.update(record)
         return record
 
-    async def consume(self, device_code: str) -> Optional[DeviceCode]:
+    async def consume(self, device_code: str) -> DeviceCode | None:
         record = self._records.pop(_hash_device_code(device_code), None)
         if record is not None:
             self._user_code_index.pop(record.user_code, None)
@@ -272,7 +271,7 @@ class ValkeyDeviceCodeStorage(DeviceCodeStorage):
         verification_uri_complete_template: str,
         ttl: timedelta,
         interval: int = 5,
-        client_hint: Optional[str] = None,
+        client_hint: str | None = None,
     ) -> tuple[DeviceCode, str]:
         # Hand off the heavy lifting; reuse the in-memory builder for the
         # collision-avoidance loop (it only checks local state, which is fine
@@ -312,13 +311,13 @@ class ValkeyDeviceCodeStorage(DeviceCodeStorage):
         await self._store(record)
         return record, device_code
 
-    async def get_by_device_code(self, device_code: str) -> Optional[DeviceCode]:
+    async def get_by_device_code(self, device_code: str) -> DeviceCode | None:
         raw = await self._client.hgetall(self._record_key(_hash_device_code(device_code)))
         if not raw:
             return None
         return self._deserialize(raw)
 
-    async def get_by_user_code(self, user_code: str) -> Optional[DeviceCode]:
+    async def get_by_user_code(self, user_code: str) -> DeviceCode | None:
         hash_bytes = await self._client.get(self._user_code_key(user_code))
         if not hash_bytes:
             return None
@@ -330,7 +329,7 @@ class ValkeyDeviceCodeStorage(DeviceCodeStorage):
     async def update(self, record: DeviceCode) -> None:
         await self._store(record)
 
-    async def approve(self, user_code: str, user_id: str) -> Optional[DeviceCode]:
+    async def approve(self, user_code: str, user_id: str) -> DeviceCode | None:
         record = await self.get_by_user_code(user_code)
         if record is None or record.status != "pending":
             return None
@@ -343,7 +342,7 @@ class ValkeyDeviceCodeStorage(DeviceCodeStorage):
         await self._store(record)
         return record
 
-    async def deny(self, user_code: str) -> Optional[DeviceCode]:
+    async def deny(self, user_code: str) -> DeviceCode | None:
         record = await self.get_by_user_code(user_code)
         if record is None or record.status != "pending":
             return None
@@ -351,13 +350,11 @@ class ValkeyDeviceCodeStorage(DeviceCodeStorage):
         await self._store(record)
         return record
 
-    async def consume(self, device_code: str) -> Optional[DeviceCode]:
+    async def consume(self, device_code: str) -> DeviceCode | None:
         record = await self.get_by_device_code(device_code)
         if record is None:
             return None
-        await self._client.delete(
-            [self._record_key(record.device_code_hash), self._user_code_key(record.user_code)]
-        )
+        await self._client.delete([self._record_key(record.device_code_hash), self._user_code_key(record.user_code)])
         return record
 
 

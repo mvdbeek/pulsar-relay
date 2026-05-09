@@ -395,9 +395,7 @@ async def revoke_refresh_token(payload: RevokeRequest) -> None:
     try:
         jti, _ = split_wire_token(payload.refresh_token)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="malformed refresh token"
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="malformed refresh token") from exc
     if payload.revoke_chain:
         await storage.revoke_chain(jti, "logout")
     else:

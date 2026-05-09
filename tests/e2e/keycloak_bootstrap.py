@@ -7,14 +7,14 @@ have to ship a fragile realm-import JSON.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import cast
 
 import httpx
 
 
 @dataclass
 class KeycloakSetup:
-    base_url: str           # e.g. "http://localhost:8089"
+    base_url: str  # e.g. "http://localhost:8089"
     admin_user: str = "admin"
     admin_password: str = "adminpassword"
     realm: str = "pulsar-test"
@@ -44,7 +44,7 @@ def _admin_token(client: httpx.Client, setup: KeycloakSetup) -> str:
         },
     )
     resp.raise_for_status()
-    return resp.json()["access_token"]
+    return cast(str, resp.json()["access_token"])
 
 
 def _put_or_post(
@@ -68,7 +68,7 @@ def _put_or_post(
     return resp
 
 
-def provision(redirect_uris: list[str], setup: Optional[KeycloakSetup] = None) -> KeycloakSetup:
+def provision(redirect_uris: list[str], setup: KeycloakSetup | None = None) -> KeycloakSetup:
     """Idempotently create the test realm/client/user.
 
     ``redirect_uris`` must include the relay's callback URL (so Keycloak will

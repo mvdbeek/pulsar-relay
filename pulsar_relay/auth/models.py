@@ -10,6 +10,7 @@ def _utcnow() -> datetime:
     """Timezone-aware UTC now (datetime.utcnow is deprecated)."""
     return datetime.now(tz=timezone.utc)
 
+
 # Define valid permission values
 Permission = Literal["admin", "read", "write"]
 

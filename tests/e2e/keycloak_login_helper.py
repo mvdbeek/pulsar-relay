@@ -22,7 +22,6 @@ from http.cookies import SimpleCookie
 
 import httpx
 
-
 _FORM_ACTION_RE = re.compile(
     r'<form[^>]*\bid=["\']kc-form-login["\'][^>]*\baction=["\']([^"\']+)["\']',
     re.IGNORECASE | re.DOTALL,

@@ -80,9 +80,7 @@ async def test_validate_id_token_happy_path(signing_key, jwks, provider_config):
         client = OIDCClient("test", provider_config, http_client=http)
         with respx.mock(base_url=ISSUER) as router:
             router.get("/jwks").respond(json=jwks)
-            claims = await client.validate_id_token(
-                _mint(_good_claims(), signing_key), nonce="NONCE"
-            )
+            claims = await client.validate_id_token(_mint(_good_claims(), signing_key), nonce="NONCE")
             assert claims["sub"] == "user-42"
 
 
@@ -95,9 +93,7 @@ async def test_validate_id_token_happy_path(signing_key, jwks, provider_config):
         ({"exp": int(time.time()) - 600}, "expired"),
     ],
 )
-async def test_validate_id_token_rejects_bad_claims(
-    signing_key, jwks, provider_config, tweak, error_substr
-):
+async def test_validate_id_token_rejects_bad_claims(signing_key, jwks, provider_config, tweak, error_substr):
     async with httpx.AsyncClient() as http:
         client = OIDCClient("test", provider_config, http_client=http)
         with respx.mock(base_url=ISSUER) as router:
@@ -114,18 +110,14 @@ async def test_validate_id_token_rejects_nonce_mismatch(signing_key, jwks, provi
         with respx.mock(base_url=ISSUER) as router:
             router.get("/jwks").respond(json=jwks)
             with pytest.raises(OIDCError, match="nonce"):
-                await client.validate_id_token(
-                    _mint(_good_claims(), signing_key), nonce="WRONG"
-                )
+                await client.validate_id_token(_mint(_good_claims(), signing_key), nonce="WRONG")
 
 
 @pytest.mark.anyio
 async def test_validate_id_token_rejects_bad_signature(signing_key, jwks, provider_config):
     """A token signed by a *different* key should be rejected."""
     other_key = RSAKey.generate_key(2048, parameters={"kid": "test-key"})
-    bad_token = joserfc_jwt.encode(
-        {"alg": "RS256", "kid": "test-key"}, _good_claims(), other_key
-    )
+    bad_token = joserfc_jwt.encode({"alg": "RS256", "kid": "test-key"}, _good_claims(), other_key)
     async with httpx.AsyncClient() as http:
         client = OIDCClient("test", provider_config, http_client=http)
         with respx.mock(base_url=ISSUER) as router:

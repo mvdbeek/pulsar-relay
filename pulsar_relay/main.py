@@ -307,10 +307,7 @@ def _custom_openapi():
                 op_security = op.get("security")
                 if not op_security:
                     continue
-                requires_pw = any(
-                    isinstance(entry, dict) and "OAuth2PasswordBearer" in entry
-                    for entry in op_security
-                )
+                requires_pw = any(isinstance(entry, dict) and "OAuth2PasswordBearer" in entry for entry in op_security)
                 if not requires_pw:
                     continue
                 for entry in oidc_entries:
@@ -321,7 +318,7 @@ def _custom_openapi():
     return schema
 
 
-app.openapi = _custom_openapi
+app.openapi = _custom_openapi  # type: ignore[method-assign]
 
 
 # Include routers

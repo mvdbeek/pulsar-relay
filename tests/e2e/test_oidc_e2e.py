@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import cast
 from urllib.parse import urlparse
 
 import httpx
@@ -67,7 +68,7 @@ def test_oidc_callback_is_idempotent(relay_against_keycloak):
             follow_relay_callback=True,
         )
         body = cb.json()
-        return body["access_token"]
+        return cast(str, body["access_token"])
 
     me_a = httpx.get(
         f"{relay}/auth/me",

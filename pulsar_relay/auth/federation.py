@@ -38,9 +38,7 @@ def _sanitize_username(raw: str) -> str:
     return cleaned[:50]
 
 
-async def _allocate_unique_username(
-    storage: UserStorage, base: str, *, provider_name: str, sub: str
-) -> str:
+async def _allocate_unique_username(storage: UserStorage, base: str, *, provider_name: str, sub: str) -> str:
     """Pick a username, suffixing on collision.
 
     Order: base → ``base-{provider}`` → ``base-{provider}-{shortsub}`` →
@@ -105,9 +103,7 @@ async def login_or_provision_oidc_user(
         or _claim_str(claims, "email")
         or sub
     )
-    username = await _allocate_unique_username(
-        storage, username_source, provider_name=provider_name, sub=sub
-    )
+    username = await _allocate_unique_username(storage, username_source, provider_name=provider_name, sub=sub)
 
     email = _claim_str(claims, provider_config.claim_email)
     permissions: list[Permission] = list(oidc_config.default_permissions)

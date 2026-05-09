@@ -14,7 +14,6 @@ import logging
 import secrets as secrets_mod
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 from pulsar_relay.auth.models import OIDCStateRecord
 
@@ -46,13 +45,13 @@ class OIDCStateStorage(ABC):
         provider_name: str,
         redirect_uri: str,
         ttl: timedelta,
-        next_url: Optional[str] = None,
-        device_user_code: Optional[str] = None,
+        next_url: str | None = None,
+        device_user_code: str | None = None,
     ) -> OIDCStateRecord:
         pass
 
     @abstractmethod
-    async def consume(self, state: str) -> Optional[OIDCStateRecord]:
+    async def consume(self, state: str) -> OIDCStateRecord | None:
         """Atomically remove and return the record. Single-use enforcement."""
         pass
 
@@ -70,8 +69,8 @@ class InMemoryOIDCStateStorage(OIDCStateStorage):
         provider_name: str,
         redirect_uri: str,
         ttl: timedelta,
-        next_url: Optional[str] = None,
-        device_user_code: Optional[str] = None,
+        next_url: str | None = None,
+        device_user_code: str | None = None,
     ) -> OIDCStateRecord:
         now = _utcnow()
         record = OIDCStateRecord(
@@ -88,7 +87,7 @@ class InMemoryOIDCStateStorage(OIDCStateStorage):
         self._records[record.state] = record
         return record
 
-    async def consume(self, state: str) -> Optional[OIDCStateRecord]:
+    async def consume(self, state: str) -> OIDCStateRecord | None:
         record = self._records.pop(state, None)
         if record is None:
             return None
@@ -116,8 +115,8 @@ class ValkeyOIDCStateStorage(OIDCStateStorage):
         provider_name: str,
         redirect_uri: str,
         ttl: timedelta,
-        next_url: Optional[str] = None,
-        device_user_code: Optional[str] = None,
+        next_url: str | None = None,
+        device_user_code: str | None = None,
     ) -> OIDCStateRecord:
         now = _utcnow()
         record = OIDCStateRecord(
@@ -135,7 +134,7 @@ class ValkeyOIDCStateStorage(OIDCStateStorage):
         await self._client.expire(self._key(record.state), max(int(ttl.total_seconds()), 60))
         return record
 
-    async def consume(self, state: str) -> Optional[OIDCStateRecord]:
+    async def consume(self, state: str) -> OIDCStateRecord | None:
         key = self._key(state)
         raw = await self._client.get(key)
         if not raw:

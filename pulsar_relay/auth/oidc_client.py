@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass, field
 from hashlib import sha256
 from secrets import token_urlsafe
-from typing import Any, Optional
+from typing import Any, cast
 from urllib.parse import urlencode
 
 import httpx
@@ -45,7 +45,7 @@ class _Discovered:
     authorization_endpoint: str
     token_endpoint: str
     jwks_uri: str
-    userinfo_endpoint: Optional[str]
+    userinfo_endpoint: str | None
     fetched_at: float
 
 
@@ -61,10 +61,10 @@ class TokenSet:
 
     access_token: str
     id_token: str
-    refresh_token: Optional[str] = None
+    refresh_token: str | None = None
     token_type: str = "Bearer"
-    expires_in: Optional[int] = None
-    scope: Optional[str] = None
+    expires_in: int | None = None
+    scope: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -81,7 +81,7 @@ def code_challenge_for(verifier: str) -> str:
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
-def _max_age_from_cache_control(header: Optional[str]) -> Optional[int]:
+def _max_age_from_cache_control(header: str | None) -> int | None:
     if not header:
         return None
     match = re.search(r"max-age\s*=\s*(\d+)", header, re.IGNORECASE)
@@ -101,15 +101,15 @@ class OIDCClient:
         provider_name: str,
         config: OIDCProviderConfig,
         *,
-        http_client: Optional[httpx.AsyncClient] = None,
+        http_client: httpx.AsyncClient | None = None,
         clock_skew_seconds: int = 60,
     ) -> None:
         self.provider_name = provider_name
         self.config = config
         self._http = http_client  # if None, we create per-call clients
         self._clock_skew = clock_skew_seconds
-        self._discovered: Optional[_Discovered] = None
-        self._jwks: Optional[_CachedJWKS] = None
+        self._discovered: _Discovered | None = None
+        self._jwks: _CachedJWKS | None = None
 
     # ---- HTTP helpers -------------------------------------------------------
 
@@ -119,11 +119,16 @@ class OIDCClient:
         async with httpx.AsyncClient(timeout=10.0) as client:
             return await client.get(url)
 
-    async def _post(self, url: str, *, data: dict[str, str], auth: Optional[tuple[str, str]] = None) -> httpx.Response:
+    async def _post(self, url: str, *, data: dict[str, str], auth: tuple[str, str] | None = None) -> httpx.Response:
+        # httpx rejects ``auth=None`` (it expects a sentinel). Build a kwargs
+        # dict so we omit the key entirely when no auth is configured.
+        kwargs: dict[str, Any] = {"data": data}
+        if auth is not None:
+            kwargs["auth"] = auth
         if self._http is not None:
-            return await self._http.post(url, data=data, auth=auth)
+            return await self._http.post(url, **kwargs)
         async with httpx.AsyncClient(timeout=10.0) as client:
-            return await client.post(url, data=data, auth=auth)
+            return await client.post(url, **kwargs)
 
     # ---- discovery ---------------------------------------------------------
 
@@ -135,9 +140,7 @@ class OIDCClient:
         if cfg.discovery_url:
             resp = await self._get(cfg.discovery_url)
             if resp.status_code != 200:
-                raise OIDCError(
-                    f"OIDC discovery failed for {self.provider_name}: HTTP {resp.status_code}"
-                )
+                raise OIDCError(f"OIDC discovery failed for {self.provider_name}: HTTP {resp.status_code}")
             doc = resp.json()
             self._discovered = _Discovered(
                 issuer=doc["issuer"],
@@ -169,9 +172,7 @@ class OIDCClient:
         discovered = await self._discover()
         resp = await self._get(discovered.jwks_uri)
         if resp.status_code != 200:
-            raise OIDCError(
-                f"JWKS fetch failed for {self.provider_name}: HTTP {resp.status_code}"
-            )
+            raise OIDCError(f"JWKS fetch failed for {self.provider_name}: HTTP {resp.status_code}")
         keyset = KeySet.import_key_set(resp.json())
 
         max_age = _max_age_from_cache_control(resp.headers.get("Cache-Control"))
@@ -188,7 +189,7 @@ class OIDCClient:
         state: str,
         nonce: str,
         code_verifier: str,
-        extra_params: Optional[dict[str, str]] = None,
+        extra_params: dict[str, str] | None = None,
     ) -> str:
         discovered = await self._discover()
         params = {
@@ -227,9 +228,7 @@ class OIDCClient:
         auth = (self.config.client_id, self.config.client_secret)
         resp = await self._post(discovered.token_endpoint, data=data, auth=auth)
         if resp.status_code != 200:
-            raise OIDCError(
-                f"Token exchange failed for {self.provider_name}: HTTP {resp.status_code} {resp.text!r}"
-            )
+            raise OIDCError(f"Token exchange failed for {self.provider_name}: HTTP {resp.status_code} {resp.text!r}")
         body = resp.json()
         if "id_token" not in body:
             raise OIDCError(f"Token response missing id_token for {self.provider_name}")
@@ -247,7 +246,7 @@ class OIDCClient:
         self,
         id_token: str,
         *,
-        nonce: Optional[str],
+        nonce: str | None,
     ) -> dict[str, Any]:
         """Validate signature + standard claims and return the parsed claims dict."""
         discovered = await self._discover()
@@ -273,9 +272,7 @@ class OIDCClient:
         skew = self._clock_skew
 
         if claims.get("iss") != discovered.issuer:
-            raise OIDCError(
-                f"ID token issuer mismatch (expected {discovered.issuer}, got {claims.get('iss')})"
-            )
+            raise OIDCError(f"ID token issuer mismatch (expected {discovered.issuer}, got {claims.get('iss')})")
         aud = claims.get("aud")
         aud_list = aud if isinstance(aud, list) else [aud]
         if self.config.client_id not in aud_list:
@@ -299,7 +296,7 @@ class OIDCClient:
 
         return claims
 
-    async def fetch_userinfo(self, access_token: str) -> Optional[dict[str, Any]]:
+    async def fetch_userinfo(self, access_token: str) -> dict[str, Any] | None:
         """Optional: fetch userinfo to fill in claims absent from the ID token."""
         discovered = await self._discover()
         if not discovered.userinfo_endpoint:
@@ -317,7 +314,7 @@ class OIDCClient:
             )
             if resp.status_code != 200:
                 return None
-            return resp.json()
+            return cast("dict[str, Any]", resp.json())
         finally:
             if close:
                 await client.aclose()

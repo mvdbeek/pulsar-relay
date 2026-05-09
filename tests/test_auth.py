@@ -290,9 +290,7 @@ class TestFederatedIdentity:
 
     @pytest.mark.anyio
     async def test_unknown_identity_returns_none(self, auth_storage):
-        result = await auth_storage.get_user_by_federated_identity(
-            "https://nope.example", "missing"
-        )
+        result = await auth_storage.get_user_by_federated_identity("https://nope.example", "missing")
         assert result is None
 
 

@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 from fastapi import APIRouter, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -40,7 +39,7 @@ def _utcnow() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
-def _rfc8628_error(error: str, *, status_code: int = 400, description: Optional[str] = None) -> JSONResponse:
+def _rfc8628_error(error: str, *, status_code: int = 400, description: str | None = None) -> JSONResponse:
     body = {"error": error}
     if description:
         body["error_description"] = description
@@ -50,8 +49,8 @@ def _rfc8628_error(error: str, *, status_code: int = 400, description: Optional[
 @router.post("/code")
 async def request_device_code(
     request: Request,
-    client_hint: Optional[str] = Form(None),
-    scope: Optional[str] = Form(None),  # noqa: ARG001 — accepted but ignored in v1
+    client_hint: str | None = Form(None),
+    scope: str | None = Form(None),  # noqa: ARG001 — accepted but ignored in v1
 ) -> JSONResponse:
     """RFC 8628 §3.1: issue a ``device_code`` + ``user_code`` pair."""
     if not settings.oidc.enabled or not settings.oidc.providers:
@@ -65,9 +64,7 @@ async def request_device_code(
     storage = get_device_code_storage()
     base_url = settings.oidc.base_url or str(request.base_url).rstrip("/")
     verification_uri = f"{base_url.rstrip('/')}/auth/device"
-    verification_uri_complete_template = (
-        f"{base_url.rstrip('/')}/auth/device?user_code={{user_code}}"
-    )
+    verification_uri_complete_template = f"{base_url.rstrip('/')}/auth/device?user_code={{user_code}}"
 
     record, device_code = await storage.create(
         verification_uri=verification_uri,
@@ -93,7 +90,7 @@ async def request_device_code(
 async def poll_device_token(
     grant_type: str = Form(...),
     device_code: str = Form(...),
-    client_id: Optional[str] = Form(None),  # noqa: ARG001 — RFC8628 allows it; we don't validate in v1
+    client_id: str | None = Form(None),  # noqa: ARG001 — RFC8628 allows it; we don't validate in v1
 ) -> JSONResponse:
     """RFC 8628 §3.4: daemon polling endpoint."""
     if grant_type != _RFC8628_GRANT:
@@ -207,7 +204,7 @@ _DEVICE_NOT_FOUND_HTML = """<!doctype html>
 
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
-async def device_landing(user_code: Optional[str] = None) -> HTMLResponse:
+async def device_landing(user_code: str | None = None) -> HTMLResponse:
     """Operator-facing approval page.
 
     With no ``user_code`` we render a small form prompting for it. Otherwise
@@ -226,11 +223,7 @@ async def device_landing(user_code: Optional[str] = None) -> HTMLResponse:
     if record is None or record.status != "pending" or record.expires_at <= _utcnow():
         return HTMLResponse(_DEVICE_NOT_FOUND_HTML, status_code=404)
 
-    hint_html = (
-        f'<p class="hint">Requested by: <code>{record.client_hint}</code></p>'
-        if record.client_hint
-        else ""
-    )
+    hint_html = f'<p class="hint">Requested by: <code>{record.client_hint}</code></p>' if record.client_hint else ""
     buttons = "".join(
         f'<a href="/auth/oidc/{name}/login?device_user_code={record.user_code}">{cfg.display_name}</a>'
         for name, cfg in settings.oidc.providers.items()

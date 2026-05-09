@@ -10,8 +10,8 @@ import shutil
 import socket
 import subprocess
 import time
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import httpx
 import pytest
@@ -25,7 +25,8 @@ COMPOSE_FILE = E2E_DIR / "docker-compose.yml"
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
-        return s.getsockname()[1]
+        port: int = s.getsockname()[1]
+        return port
 
 
 def _compose_cmd() -> list[str]:
@@ -46,7 +47,10 @@ def _compose_cmd() -> list[str]:
     legacy = shutil.which("docker-compose")
     if legacy is not None:
         return [legacy]
+    # pytest.skip is NoReturn, but mypy doesn't always infer that — explicit
+    # raise keeps the function's return type honest.
     pytest.skip("docker / docker-compose not available")
+    raise RuntimeError("unreachable")
 
 
 def _docker_running() -> bool:
@@ -54,9 +58,7 @@ def _docker_running() -> bool:
     if docker is None:
         return False
     try:
-        subprocess.run(
-            [docker, "info"], check=True, capture_output=True, timeout=5
-        )
+        subprocess.run([docker, "info"], check=True, capture_output=True, timeout=5)
         return True
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return False
@@ -168,9 +170,7 @@ def relay_against_keycloak(keycloak: KeycloakSetup, tmp_path: Path) -> Iterator[
             time.sleep(0.3)
         else:
             stdout, stderr = proc.communicate(timeout=2)
-            pytest.fail(
-                f"Relay subprocess did not start.\nstdout={stdout!r}\nstderr={stderr!r}"
-            )
+            pytest.fail(f"Relay subprocess did not start.\nstdout={stdout!r}\nstderr={stderr!r}")
 
         yield {"base_url": base_url, "keycloak": setup}
     finally:

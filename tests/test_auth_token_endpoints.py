@@ -18,12 +18,8 @@ async def test_login_returns_refresh_token(test_client_with_auth):
 
 @pytest.mark.anyio
 async def test_refresh_rotates_token(test_client_with_auth):
-    login = test_client_with_auth.post(
-        "/auth/login", data={"username": "admin", "password": "admin1234"}
-    ).json()
-    refresh = test_client_with_auth.post(
-        "/auth/token/refresh", json={"refresh_token": login["refresh_token"]}
-    )
+    login = test_client_with_auth.post("/auth/login", data={"username": "admin", "password": "admin1234"}).json()
+    refresh = test_client_with_auth.post("/auth/token/refresh", json={"refresh_token": login["refresh_token"]})
     assert refresh.status_code == 200
     rotated = refresh.json()
     assert rotated["access_token"]
@@ -32,24 +28,16 @@ async def test_refresh_rotates_token(test_client_with_auth):
 
 @pytest.mark.anyio
 async def test_replay_of_rotated_token_returns_401(test_client_with_auth):
-    login = test_client_with_auth.post(
-        "/auth/login", data={"username": "admin", "password": "admin1234"}
-    ).json()
-    test_client_with_auth.post(
-        "/auth/token/refresh", json={"refresh_token": login["refresh_token"]}
-    )
+    login = test_client_with_auth.post("/auth/login", data={"username": "admin", "password": "admin1234"}).json()
+    test_client_with_auth.post("/auth/token/refresh", json={"refresh_token": login["refresh_token"]})
     # Re-presenting the original (rotated) token must fail.
-    replay = test_client_with_auth.post(
-        "/auth/token/refresh", json={"refresh_token": login["refresh_token"]}
-    )
+    replay = test_client_with_auth.post("/auth/token/refresh", json={"refresh_token": login["refresh_token"]})
     assert replay.status_code == 401
 
 
 @pytest.mark.anyio
 async def test_sessions_list_and_revoke(test_client_with_auth):
-    login = test_client_with_auth.post(
-        "/auth/login", data={"username": "admin", "password": "admin1234"}
-    ).json()
+    login = test_client_with_auth.post("/auth/login", data={"username": "admin", "password": "admin1234"}).json()
     headers = {"Authorization": f"Bearer {login['access_token']}"}
 
     sessions = test_client_with_auth.get("/auth/sessions", headers=headers).json()
@@ -65,12 +53,8 @@ async def test_sessions_list_and_revoke(test_client_with_auth):
 
 @pytest.mark.anyio
 async def test_revoke_endpoint_kills_chain(test_client_with_auth):
-    login = test_client_with_auth.post(
-        "/auth/login", data={"username": "admin", "password": "admin1234"}
-    ).json()
-    rotated = test_client_with_auth.post(
-        "/auth/token/refresh", json={"refresh_token": login["refresh_token"]}
-    ).json()
+    login = test_client_with_auth.post("/auth/login", data={"username": "admin", "password": "admin1234"}).json()
+    rotated = test_client_with_auth.post("/auth/token/refresh", json={"refresh_token": login["refresh_token"]}).json()
 
     # Revoke the *new* token's chain. Old (already-rotated) is also dead.
     rev = test_client_with_auth.post(
@@ -78,9 +62,7 @@ async def test_revoke_endpoint_kills_chain(test_client_with_auth):
         json={"refresh_token": rotated["refresh_token"], "revoke_chain": True},
     )
     assert rev.status_code == 204
-    next_attempt = test_client_with_auth.post(
-        "/auth/token/refresh", json={"refresh_token": rotated["refresh_token"]}
-    )
+    next_attempt = test_client_with_auth.post("/auth/token/refresh", json={"refresh_token": rotated["refresh_token"]})
     assert next_attempt.status_code == 401
 
 

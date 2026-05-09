@@ -65,7 +65,7 @@ def load_config_file(config_path: Optional[Path] = None) -> dict[str, Any]:
     return config_data
 
 
-_OIDC_DEFAULT_PERMISSIONS: tuple[str, ...] = ("read", "write")
+_OIDC_DEFAULT_PERMISSIONS: tuple[Literal["admin", "read", "write"], ...] = ("read", "write")
 
 
 class OIDCProviderConfig(BaseModel):
@@ -144,9 +144,7 @@ class OIDCConfig(BaseModel):
             # Dev convenience only.
             logger.warning("OIDC base_url is http://localhost — only acceptable for development")
             return self
-        raise ValueError(
-            "oidc.base_url must be https:// (http:// only allowed for localhost dev)"
-        )
+        raise ValueError("oidc.base_url must be https:// (http:// only allowed for localhost dev)")
 
 
 class Settings(BaseSettings):
