@@ -53,13 +53,14 @@ dependencies = [
     "tomli>=2.3.0",
     "pyyaml>=6.0.2",
     "structlog>=24.4.0",
+    "authlib>=1.3",
+    "httpx>=0.27.2",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3.4",
     "pytest-cov>=6.0.0",
-    "httpx>=0.27.2",
     "httpx-ws>=0.6.0,!=0.8.1",
     "websockets>=13.1",
     "tox>=4.30.3",
@@ -67,6 +68,7 @@ dev = [
     "ruff>=0.8.2",
     "mypy>=1.13.0",
     "types-PyYAML>=6.0.12.20250915",
+    "respx>=0.21.0",
 ]
 
 [project.urls]
@@ -89,9 +91,10 @@ pulsar_relay = ["py.typed"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 anyio_mode = "auto"
-addopts = "-v --cov=pulsar_relay --cov-report=term-missing"
+addopts = "-v --cov=pulsar_relay --cov-report=term-missing -m 'not e2e'"
 markers = [
     "integration: marks tests as integration tests (require external services like Valkey)",
+    "e2e: end-to-end tests that spin up Docker dependencies (Keycloak); run with `pytest -m e2e`",
 ]
 
 [tool.black]
@@ -107,10 +110,11 @@ select = ["E", "F", "I", "N", "W", "UP"]
 ignore = []
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
+plugins = ["pydantic.mypy"]
 exclude = [
     "^.tox/",
 ]

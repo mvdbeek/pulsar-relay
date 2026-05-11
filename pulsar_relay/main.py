@@ -7,13 +7,37 @@ from contextlib import asynccontextmanager
 from typing import Union
 
 from fastapi import FastAPI
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from pulsar_relay.api import auth, health, messages, polling, topics, websocket
-from pulsar_relay.auth.dependencies import set_topic_storage, set_user_storage
+from pulsar_relay.api import auth, device, health, messages, oidc, polling, topics, websocket
+from pulsar_relay.auth.dependencies import (
+    set_device_code_storage,
+    set_oidc_clients,
+    set_oidc_state_storage,
+    set_refresh_token_storage,
+    set_topic_storage,
+    set_user_storage,
+)
+from pulsar_relay.auth.device_flow import (
+    DeviceCodeStorage,
+    InMemoryDeviceCodeStorage,
+    ValkeyDeviceCodeStorage,
+)
 from pulsar_relay.auth.jwt import hash_password
 from pulsar_relay.auth.models import UserCreate
+from pulsar_relay.auth.oidc_client import OIDCClient
+from pulsar_relay.auth.oidc_state import (
+    InMemoryOIDCStateStorage,
+    OIDCStateStorage,
+    ValkeyOIDCStateStorage,
+)
+from pulsar_relay.auth.refresh import (
+    InMemoryRefreshTokenStorage,
+    RefreshTokenStorage,
+    ValkeyRefreshTokenStorage,
+)
 from pulsar_relay.auth.storage import InMemoryUserStorage, UserStorage, ValkeyUserStorage
 from pulsar_relay.auth.topic_storage import InMemoryTopicStorage, TopicStorage, ValkeyTopicStorage
 from pulsar_relay.config import settings
@@ -40,6 +64,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup: Initialize all services
     log.info("Starting up application...")
 
+    # Refuse to start with the default JWT secret outside of explicit dev runs.
+    if settings.jwt_secret_key == "your-secret-key-here-change-in-production":
+        log.warning(
+            "JWT_SECRET_KEY is set to its insecure default. Set PULSAR_JWT_SECRET_KEY"
+            " before exposing this relay to anyone."
+        )
+
     # Initialize storage based on configuration
     if settings.storage_backend == "valkey":
         log.info("Using Valkey storage backend")
@@ -58,6 +89,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         log.info("Initialized Valkey Topic Storage")
         user_storage: UserStorage = ValkeyUserStorage(storage._client)
         log.info("Initialized Valkey User Storage")
+        refresh_storage: RefreshTokenStorage = ValkeyRefreshTokenStorage(storage._client)
+        device_storage: DeviceCodeStorage = ValkeyDeviceCodeStorage(storage._client)
+        oidc_state_storage: OIDCStateStorage = ValkeyOIDCStateStorage(storage._client)
+        log.info("Initialized Valkey refresh/device/oidc-state storage")
     else:
         log.info("Using in-memory storage backend")
         storage = MemoryStorage(max_messages_per_topic=settings.max_messages_per_topic)
@@ -66,6 +101,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         log.info("Initialized In-Memory User Storage")
         topic_storage = InMemoryTopicStorage()
         log.info("Initialized In-Memory Topic Storage")
+        refresh_storage = InMemoryRefreshTokenStorage()
+        device_storage = InMemoryDeviceCodeStorage()
+        oidc_state_storage = InMemoryOIDCStateStorage()
+        log.info("Initialized in-memory refresh/device/oidc-state storage")
 
     # Initialize connection manager
     connection_manager = ConnectionManager()
@@ -97,6 +136,36 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     set_user_storage(user_storage)
     set_topic_storage(topic_storage)
+    set_refresh_token_storage(refresh_storage)
+    set_device_code_storage(device_storage)
+    set_oidc_state_storage(oidc_state_storage)
+
+    # Build OIDC clients (one per configured provider). Empty when oidc.enabled=False.
+    oidc_clients: dict[str, OIDCClient] = {}
+    oidc_auth_urls: dict[str, str] = {}
+    if settings.oidc.enabled:
+        for name, provider_cfg in settings.oidc.providers.items():
+            client_inst = OIDCClient(name, provider_cfg)
+            oidc_clients[name] = client_inst
+            # Resolve discovery so Swagger UI can reference the authorization
+            # endpoint synchronously when generating the OpenAPI schema. The
+            # OIDC client caches the discovery document.
+            try:
+                discovered = await client_inst._discover()
+                oidc_auth_urls[name] = discovered.authorization_endpoint
+            except Exception as exc:  # noqa: BLE001 — best-effort, log + skip
+                log.warning(
+                    "OIDC discovery failed for provider %s; Swagger UI will not "
+                    "show the OIDC button until /docs is reloaded. (%s)",
+                    name,
+                    exc,
+                )
+        log.info("Initialized %d OIDC providers: %s", len(oidc_clients), list(oidc_clients))
+    set_oidc_clients(oidc_clients)
+    # Stash auth URLs on app.state so the openapi() override can pick them up.
+    app.state.oidc_auth_urls = oidc_auth_urls
+    # Reset any cached schema so the next /openapi.json reflects the new auth URLs.
+    app.openapi_schema = None
 
     # Bootstrap admin user if configured
     if settings.bootstrap_admin_username and settings.bootstrap_admin_password:
@@ -149,18 +218,114 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     log.info("Application shutdown complete")
 
 
+# Build Swagger UI's OAuth2 init parameters from the first configured OIDC
+# provider (if any). Swagger UI only handles a single client_id at a time;
+# callers with multiple providers should pick the one they want via OAuth2's
+# scope picker. PKCE is mandatory because we make code_verifier required on
+# the swagger-token bridge endpoint.
+def _swagger_init_oauth() -> dict:
+    if not settings.oidc.enabled or not settings.oidc.providers:
+        return {}
+    name, provider_cfg = next(iter(settings.oidc.providers.items()))
+    return {
+        "clientId": provider_cfg.client_id,
+        # Confidential client. In a hardened deployment you would proxy the
+        # token exchange through the relay (which we already do via
+        # /auth/oidc/{provider}/swagger-token) and not put the secret in
+        # browser-side JS. Acceptable for /docs as a developer convenience.
+        "clientSecret": provider_cfg.client_secret,
+        "usePkceWithAuthorizationCodeGrant": True,
+        "scopes": " ".join(provider_cfg.scopes),
+        "additionalQueryStringParams": {"_oidc_provider": name},
+    }
+
+
 # Create FastAPI app with lifespan handler
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     description="High-performance message relay with WebSocket and long-polling support",
     lifespan=lifespan,
+    swagger_ui_init_oauth=_swagger_init_oauth(),
 )
+
+
+def _custom_openapi():
+    """Generate the OpenAPI schema, augmenting it with OIDC auth-code flows.
+
+    Each configured OIDC provider becomes a separate ``oauth2`` security
+    scheme. The authorization URL comes from the provider's discovery doc
+    (resolved at startup); the token URL is our own ``swagger-token`` bridge
+    that issues relay JWTs. The existing password flow stays in place so
+    operators can still authenticate as the bootstrap admin.
+    """
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+
+    auth_urls = getattr(app.state, "oidc_auth_urls", {}) or {}
+    if auth_urls:
+        components = schema.setdefault("components", {})
+        schemes = components.setdefault("securitySchemes", {})
+        oidc_entries: list[dict] = []
+        for name, auth_url in auth_urls.items():
+            provider_cfg = settings.oidc.providers[name]
+            scheme_name = f"OIDC_{name}"
+            schemes[scheme_name] = {
+                "type": "oauth2",
+                "description": provider_cfg.display_name,
+                "flows": {
+                    "authorizationCode": {
+                        "authorizationUrl": auth_url,
+                        "tokenUrl": f"/auth/oidc/{name}/swagger-token",
+                        "refreshUrl": "/auth/token/refresh",
+                        "scopes": {s: s for s in provider_cfg.scopes},
+                    }
+                },
+            }
+            oidc_entries.append({scheme_name: list(provider_cfg.scopes)})
+
+        # FastAPI emits per-operation ``security`` blocks listing only
+        # OAuth2PasswordBearer (the scheme attached to each endpoint's
+        # dependencies). An OpenAPI top-level ``security`` doesn't help —
+        # operation-level security replaces it. Walk every operation and
+        # offer OIDC_<provider> alongside the password scheme so an
+        # operator can authorize once via either scheme and have Swagger
+        # actually send the token.
+        for path_item in schema.get("paths", {}).values():
+            if not isinstance(path_item, dict):
+                continue
+            for op in path_item.values():
+                if not isinstance(op, dict):
+                    continue
+                op_security = op.get("security")
+                if not op_security:
+                    continue
+                requires_pw = any(isinstance(entry, dict) and "OAuth2PasswordBearer" in entry for entry in op_security)
+                if not requires_pw:
+                    continue
+                for entry in oidc_entries:
+                    if entry not in op_security:
+                        op_security.append(entry)
+
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _custom_openapi  # type: ignore[method-assign]
 
 
 # Include routers
 app.include_router(health.router)
 app.include_router(auth.router, prefix="/auth", tags=["authentication"])
+app.include_router(oidc.router)
+app.include_router(device.router)
 app.include_router(topics.router)
 app.include_router(messages.router)
 app.include_router(websocket.router)

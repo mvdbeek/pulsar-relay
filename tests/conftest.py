@@ -10,9 +10,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pulsar_relay.api import messages, websocket
-from pulsar_relay.auth.dependencies import set_topic_storage, set_user_storage
+from pulsar_relay.auth.dependencies import (
+    set_device_code_storage,
+    set_oidc_clients,
+    set_oidc_state_storage,
+    set_refresh_token_storage,
+    set_topic_storage,
+    set_user_storage,
+)
+from pulsar_relay.auth.device_flow import InMemoryDeviceCodeStorage
 from pulsar_relay.auth.jwt import create_access_token
 from pulsar_relay.auth.models import UserCreate
+from pulsar_relay.auth.oidc_state import InMemoryOIDCStateStorage
+from pulsar_relay.auth.refresh import InMemoryRefreshTokenStorage
 from pulsar_relay.auth.storage import InMemoryUserStorage, UserStorage
 from pulsar_relay.auth.topic_storage import InMemoryTopicStorage
 from pulsar_relay.core.connections import ConnectionManager
@@ -157,6 +167,13 @@ def test_client_with_auth(auth_storage, topic_storage):
     # Set up topic storage
     set_topic_storage(topic_storage)
     app.state.topic_storage = topic_storage
+
+    # Set up refresh / device-flow / OIDC state stores so /auth/login and the
+    # related endpoints can issue refresh tokens.
+    set_refresh_token_storage(InMemoryRefreshTokenStorage())
+    set_device_code_storage(InMemoryDeviceCodeStorage())
+    set_oidc_state_storage(InMemoryOIDCStateStorage())
+    set_oidc_clients({})
 
     # Set up other app state
     app.state.storage = msg_storage

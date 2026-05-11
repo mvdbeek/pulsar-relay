@@ -1,13 +1,16 @@
 """Authentication endpoints."""
 
 import logging
-from typing import Annotated, Any
+from datetime import timedelta
+from typing import Annotated, Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel, Field
 
 from pulsar_relay.auth.dependencies import (
     get_current_user,
+    get_refresh_token_storage,
     get_user_storage,
     require_permission,
 )
@@ -24,6 +27,8 @@ from pulsar_relay.auth.models import (
     UserPublic,
     UserUpdate,
 )
+from pulsar_relay.auth.refresh import RefreshTokenError, split_wire_token, verify_and_consume
+from pulsar_relay.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +65,8 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Verify password
-    if not verify_password(form_data.password, user.hashed_password):
+    # Verify password. OIDC-only accounts have no local password and must use the OIDC flow.
+    if not user.hashed_password or not verify_password(form_data.password, user.hashed_password):
         logger.warning(f"Invalid password for user: {form_data.username}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -77,8 +82,14 @@ async def login(
             detail="User account is inactive",
         )
 
-    # Create access token
+    # Create access token + rotating refresh token.
     access_token = create_access_token(user)
+    refresh_storage = get_refresh_token_storage()
+    _, refresh_wire = await refresh_storage.create(
+        user_id=user.user_id,
+        ttl=timedelta(days=settings.refresh_token_ttl_days),
+        client_hint="password-login",
+    )
 
     logger.info(f"User logged in successfully: {user.username}")
 
@@ -86,6 +97,7 @@ async def login(
         access_token=access_token,
         token_type="bearer",
         expires_in=get_token_expiration_seconds(),
+        refresh_token=refresh_wire,
     )
 
 
@@ -313,3 +325,103 @@ async def delete_user(
         )
 
     logger.info(f"Admin {current_user.username} deleted user {user_to_delete.username} ({user_id})")
+
+
+# --- Refresh tokens & sessions ----------------------------------------------
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(..., description="The wire refresh token to rotate")
+
+
+class RevokeRequest(BaseModel):
+    refresh_token: str
+    revoke_chain: bool = Field(default=False, description="Revoke the entire rotation chain")
+
+
+class SessionInfo(BaseModel):
+    jti: str
+    issued_at: Any
+    expires_at: Any
+    last_used_at: Optional[Any] = None
+    client_hint: Optional[str] = None
+
+
+@router.post("/token/refresh", response_model=TokenResponse)
+async def refresh_token(payload: RefreshRequest, request: Request) -> TokenResponse:
+    """Rotate a refresh token. Replaying a rotated token revokes the chain."""
+    storage = get_refresh_token_storage()
+    try:
+        old = await verify_and_consume(storage, payload.refresh_token)
+    except RefreshTokenError as exc:
+        logger.info("Refresh failed: %s (remote=%s)", exc, request.client.host if request.client else "?")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+    user_storage = get_user_storage()
+    user = await user_storage.get_user_by_id(old.user_id)
+    if user is None or not user.is_active:
+        await storage.mark_revoked(old.jti, "logout")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="user not found")
+
+    # Mark the consumed token as rotated; this is what triggers chain
+    # revocation if it ever shows up again.
+    await storage.mark_revoked(old.jti, "rotated")
+    await storage.mark_used(old.jti)
+
+    _, new_wire = await storage.create(
+        user_id=user.user_id,
+        ttl=timedelta(days=settings.refresh_token_ttl_days),
+        parent_jti=old.jti,
+        client_hint=old.client_hint,
+    )
+
+    access_token = create_access_token(user)
+    return TokenResponse(
+        access_token=access_token,
+        token_type="bearer",
+        expires_in=get_token_expiration_seconds(),
+        refresh_token=new_wire,
+    )
+
+
+@router.post("/token/revoke", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_refresh_token(payload: RevokeRequest) -> None:
+    """Revoke a refresh token (and optionally its rotation chain)."""
+    storage = get_refresh_token_storage()
+    try:
+        jti, _ = split_wire_token(payload.refresh_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="malformed refresh token") from exc
+    if payload.revoke_chain:
+        await storage.revoke_chain(jti, "logout")
+    else:
+        await storage.mark_revoked(jti, "logout")
+
+
+@router.get("/sessions", response_model=list[SessionInfo])
+async def list_sessions(current_user: User = Depends(get_current_user)) -> list[SessionInfo]:
+    storage = get_refresh_token_storage()
+    tokens = await storage.list_for_user(current_user.user_id)
+    return [
+        SessionInfo(
+            jti=t.jti,
+            issued_at=t.issued_at,
+            expires_at=t.expires_at,
+            last_used_at=t.last_used_at,
+            client_hint=t.client_hint,
+        )
+        for t in tokens
+    ]
+
+
+@router.delete("/sessions/{jti}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_session(jti: str, current_user: User = Depends(get_current_user)) -> None:
+    storage = get_refresh_token_storage()
+    record = await storage.get_by_jti(jti)
+    if record is None or record.user_id != current_user.user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="session not found")
+    await storage.mark_revoked(jti, "logout")

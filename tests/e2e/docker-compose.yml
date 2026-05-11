@@ -1,0 +1,22 @@
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command:
+      - start-dev
+      - --http-port=8080
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: adminpassword
+      # Allow login pages to be reached over plain http for the test rig.
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+    ports:
+      - "${KEYCLOAK_HOST_PORT:-8089}:8080"
+    healthcheck:
+      # Keycloak 26+ exposes a built-in health probe at /health/ready (port 9000).
+      # Until that becomes the default, fall back to hitting the public realm.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET /realms/master HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q '200\\|302'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30

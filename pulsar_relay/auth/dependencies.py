@@ -11,6 +11,10 @@ from pulsar_relay.auth.models import TokenPayload, User
 from pulsar_relay.auth.storage import UserStorage
 
 if TYPE_CHECKING:
+    from pulsar_relay.auth.device_flow import DeviceCodeStorage
+    from pulsar_relay.auth.oidc_client import OIDCClient
+    from pulsar_relay.auth.oidc_state import OIDCStateStorage
+    from pulsar_relay.auth.refresh import RefreshTokenStorage
     from pulsar_relay.auth.topic_storage import TopicStorage
 
 logger = logging.getLogger(__name__)
@@ -27,6 +31,10 @@ oauth2_scheme = OAuth2PasswordBearer(
 # Global storage instances (set during startup)
 _user_storage: Optional[UserStorage] = None
 _topic_storage: Optional["TopicStorage"] = None  # Forward reference to avoid circular import
+_refresh_token_storage: Optional["RefreshTokenStorage"] = None
+_device_code_storage: Optional["DeviceCodeStorage"] = None
+_oidc_state_storage: Optional["OIDCStateStorage"] = None
+_oidc_clients: dict[str, "OIDCClient"] = {}
 
 
 def set_user_storage(storage: UserStorage) -> None:
@@ -77,6 +85,48 @@ def get_topic_storage() -> "TopicStorage":
     if _topic_storage is None:
         raise RuntimeError("Topic storage not initialized")
     return _topic_storage
+
+
+def set_refresh_token_storage(storage: "RefreshTokenStorage") -> None:
+    global _refresh_token_storage
+    _refresh_token_storage = storage
+
+
+def get_refresh_token_storage() -> "RefreshTokenStorage":
+    if _refresh_token_storage is None:
+        raise RuntimeError("Refresh token storage not initialized")
+    return _refresh_token_storage
+
+
+def set_device_code_storage(storage: "DeviceCodeStorage") -> None:
+    global _device_code_storage
+    _device_code_storage = storage
+
+
+def get_device_code_storage() -> "DeviceCodeStorage":
+    if _device_code_storage is None:
+        raise RuntimeError("Device code storage not initialized")
+    return _device_code_storage
+
+
+def set_oidc_state_storage(storage: "OIDCStateStorage") -> None:
+    global _oidc_state_storage
+    _oidc_state_storage = storage
+
+
+def get_oidc_state_storage() -> "OIDCStateStorage":
+    if _oidc_state_storage is None:
+        raise RuntimeError("OIDC state storage not initialized")
+    return _oidc_state_storage
+
+
+def set_oidc_clients(clients: dict[str, "OIDCClient"]) -> None:
+    global _oidc_clients
+    _oidc_clients = dict(clients)
+
+
+def get_oidc_clients() -> dict[str, "OIDCClient"]:
+    return _oidc_clients
 
 
 async def get_token_payload(

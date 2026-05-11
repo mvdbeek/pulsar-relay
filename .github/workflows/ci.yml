@@ -101,3 +101,56 @@ jobs:
       - name: Run pytest
         # Run pytest env only
         run: tox -e pytest
+
+  e2e:
+    name: OIDC end-to-end (Keycloak)
+    needs: check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-3.12-${{ hashFiles('**/requirements.txt','**/pyproject.toml','**/tox.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-3.12-
+            ${{ runner.os }}-pip-
+
+      - name: Cache tox envs
+        uses: actions/cache@v4
+        with:
+          path: .tox
+          key: ${{ runner.os }}-tox-3.12-e2e-${{ hashFiles('**/tox.ini','**/requirements.txt','**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-tox-3.12-e2e-
+            ${{ runner.os }}-tox-3.12-
+
+      - name: Docker pre-flight
+        run: |
+          docker version
+          docker compose version
+          docker info
+
+      - name: Pre-pull Keycloak image
+        run: docker pull quay.io/keycloak/keycloak:26.0
+
+      - name: Install tox
+        run: pip install --upgrade pip && pip install tox
+
+      - name: Run OIDC e2e tests
+        run: tox -e e2e
+
+      - name: Dump Keycloak logs on failure
+        if: failure()
+        run: |
+          docker compose -f tests/e2e/docker-compose.yml logs || true
+          docker ps -a || true
