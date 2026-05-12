@@ -8,12 +8,15 @@ rotated token can revoke the entire family.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import secrets as secrets_mod
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
+
+from glide import Script
 
 from pulsar_relay.auth.models import RefreshToken, RefreshTokenRevokedReason
 
@@ -66,6 +69,21 @@ class RefreshTokenStorage(ABC):
         pass
 
     @abstractmethod
+    async def try_mark_rotated(self, jti: str) -> bool:
+        """Atomic CAS: transition ``revoked: 0 -> 1, reason='rotated'``.
+
+        Returns True if this caller owned the transition (the token was
+        previously not revoked). Returns False if the token was already
+        revoked — the caller lost a rotation race and should treat the
+        situation as a replay attempt.
+
+        The Valkey backend implements this with a Lua ``EVAL`` so the
+        check-then-set is a single round-trip. The in-memory backend
+        guards the check-then-set with an asyncio.Lock.
+        """
+        pass
+
+    @abstractmethod
     async def mark_used(self, jti: str) -> None:
         """Update ``last_used_at``."""
         pass
@@ -98,6 +116,11 @@ class InMemoryRefreshTokenStorage(RefreshTokenStorage):
     def __init__(self) -> None:
         self._tokens: dict[str, RefreshToken] = {}
         self._user_index: dict[str, set[str]] = {}
+        # Guard the check-then-set inside try_mark_rotated so two
+        # concurrent rotation attempts on the same token can't both
+        # succeed. Real production uses Valkey + Lua; this lock is the
+        # test-backend equivalent.
+        self._rotate_lock = asyncio.Lock()
 
     async def create(
         self,
@@ -131,6 +154,15 @@ class InMemoryRefreshTokenStorage(RefreshTokenStorage):
             return
         token.revoked = True
         token.revoked_reason = reason
+
+    async def try_mark_rotated(self, jti: str) -> bool:
+        async with self._rotate_lock:
+            token = self._tokens.get(jti)
+            if token is None or token.revoked:
+                return False
+            token.revoked = True
+            token.revoked_reason = "rotated"
+            return True
 
     async def mark_used(self, jti: str) -> None:
         token = self._tokens.get(jti)
@@ -289,6 +321,34 @@ class ValkeyRefreshTokenStorage(RefreshTokenStorage):
         token.revoked = True
         token.revoked_reason = reason
         await self._store(token)
+
+    # Atomic check-then-set for the rotation transition. The Lua script
+    # runs inside Valkey's single-threaded execution loop so the HGET +
+    # HSET pair is observed as one operation by any concurrent caller.
+    # KEYS[1] = ``refresh:tok:{jti}``.
+    # Returns 1 if this caller owned the transition, 0 if the token was
+    # missing or already revoked.
+    _rotate_cas = Script("""
+        local key = KEYS[1]
+        if redis.call('EXISTS', key) == 0 then
+            return 0
+        end
+        local current = redis.call('HGET', key, 'revoked')
+        if current == false or current == '0' or current == '' then
+            redis.call('HSET', key, 'revoked', '1', 'revoked_reason', 'rotated')
+            return 1
+        end
+        return 0
+        """)
+
+    async def try_mark_rotated(self, jti: str) -> bool:
+        token_key = self._token_key(jti)
+        result = await self._client.invoke_script(
+            type(self)._rotate_cas,
+            keys=[token_key],
+            args=[],
+        )
+        return result in (1, b"1", "1")
 
     async def mark_used(self, jti: str) -> None:
         token = await self.get_by_jti(jti)

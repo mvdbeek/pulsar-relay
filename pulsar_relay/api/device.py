@@ -13,6 +13,7 @@ Approval is tied to the OIDC callback in ``pulsar_relay/api/oidc.py``.
 
 from __future__ import annotations
 
+import html
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -241,14 +242,22 @@ async def device_landing(user_code: str | None = None) -> HTMLResponse:
     if record is None or record.status != "pending" or record.expires_at <= _utcnow():
         return HTMLResponse(_DEVICE_NOT_FOUND_HTML, status_code=404)
 
-    hint_html = f'<p class="hint">Requested by: <code>{record.client_hint}</code></p>' if record.client_hint else ""
+    # ``record.client_hint`` is set from the device-flow request body or
+    # the User-Agent header — both attacker-controlled. ``cfg.display_name``
+    # is operator-supplied but goes through the same template so we
+    # escape it too. Escaping ``record.user_code`` is defensive even
+    # though it is constrained to alnum upstream.
+    safe_hint = html.escape(record.client_hint, quote=True) if record.client_hint else ""
+    hint_html = f'<p class="hint">Requested by: <code>{safe_hint}</code></p>' if safe_hint else ""
     buttons = "".join(
-        f'<a href="/auth/oidc/{name}/login?device_user_code={record.user_code}">{cfg.display_name}</a>'
+        f'<a href="/auth/oidc/{html.escape(name, quote=True)}/login?'
+        f'device_user_code={html.escape(record.user_code, quote=True)}">'
+        f"{html.escape(cfg.display_name, quote=True)}</a>"
         for name, cfg in settings.oidc.providers.items()
     )
     return HTMLResponse(
         _DEVICE_PAGE.format(
-            user_code=record.user_code,
+            user_code=html.escape(record.user_code, quote=True),
             hint_html=hint_html,
             provider_buttons=buttons,
         )

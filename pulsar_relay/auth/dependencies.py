@@ -11,6 +11,7 @@ from pulsar_relay.auth.models import TokenPayload, User
 from pulsar_relay.auth.storage import UserStorage
 
 if TYPE_CHECKING:
+    from pulsar_relay.auth.denylist import JWTDenylistStorage
     from pulsar_relay.auth.device_flow import DeviceCodeStorage
     from pulsar_relay.auth.oidc_client import OIDCClient
     from pulsar_relay.auth.oidc_state import OIDCStateStorage
@@ -35,6 +36,19 @@ _refresh_token_storage: Optional["RefreshTokenStorage"] = None
 _device_code_storage: Optional["DeviceCodeStorage"] = None
 _oidc_state_storage: Optional["OIDCStateStorage"] = None
 _oidc_clients: dict[str, "OIDCClient"] = {}
+_jwt_denylist: Optional["JWTDenylistStorage"] = None
+
+
+def set_jwt_denylist(storage: "JWTDenylistStorage") -> None:
+    """Install the JWT deny-list backend used by ``get_current_user``."""
+    global _jwt_denylist
+    _jwt_denylist = storage
+
+
+def get_jwt_denylist() -> "JWTDenylistStorage":
+    if _jwt_denylist is None:
+        raise RuntimeError("JWT denylist not initialized")
+    return _jwt_denylist
 
 
 def set_user_storage(storage: UserStorage) -> None:
@@ -141,7 +155,7 @@ async def get_token_payload(
         Token payload
 
     Raises:
-        HTTPException: If token is invalid or expired
+        HTTPException: If token is invalid, expired, or deny-listed
     """
     payload = decode_token(token)
     if payload is None:
@@ -150,6 +164,19 @@ async def get_token_payload(
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Deny-list check: /auth/logout adds the current jti to the deny-list
+    # so the access token cannot be used again before its natural expiry.
+    # Tokens issued before the jti claim landed (``jti is None``) are
+    # accepted as-is — they expire on their own under the short access
+    # TTL.
+    if payload.jti is not None and _jwt_denylist is not None:
+        if await _jwt_denylist.is_revoked(payload.jti):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     return payload
 

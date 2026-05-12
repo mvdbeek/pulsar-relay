@@ -15,7 +15,7 @@ from pulsar_relay.auth.dependencies import (
     get_oidc_state_storage,
     get_user_storage,
 )
-from pulsar_relay.auth.federation import login_or_provision_oidc_user
+from pulsar_relay.auth.federation import FederationConflictError, login_or_provision_oidc_user
 from pulsar_relay.auth.jwt import create_access_token, get_token_expiration_seconds
 from pulsar_relay.auth.models import TokenResponse
 from pulsar_relay.auth.oidc_client import OIDCError, build_redirect_uri
@@ -157,13 +157,20 @@ async def oidc_callback(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"OIDC validation failed: {exc}") from exc
 
     user_storage = get_user_storage()
-    user = await login_or_provision_oidc_user(
-        user_storage,
-        provider_name=provider,
-        provider_config=settings.oidc.providers[provider],
-        oidc_config=settings.oidc,
-        claims=claims,
-    )
+    try:
+        user = await login_or_provision_oidc_user(
+            user_storage,
+            provider_name=provider,
+            provider_config=settings.oidc.providers[provider],
+            oidc_config=settings.oidc,
+            claims=claims,
+        )
+    except FederationConflictError as exc:
+        logger.warning("OIDC username collision (provider=%s): %s", provider, exc)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="OIDC sign-in collides with an existing local account. Contact an administrator.",
+        ) from exc
 
     # Bridge to a pending device-flow session if applicable.
     if state_record.device_user_code:

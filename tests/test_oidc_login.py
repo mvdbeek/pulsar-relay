@@ -67,6 +67,9 @@ def _good_claims() -> dict:
         "aud": CLIENT_ID,
         "sub": "user-42",
         "email": "alice@example.com",
+        # Federation gate requires email_verified=True before the email
+        # claim is allowed to source the local username (Auth H#3).
+        "email_verified": True,
         "exp": now + 600,
         "iat": now,
         "nbf": now - 5,

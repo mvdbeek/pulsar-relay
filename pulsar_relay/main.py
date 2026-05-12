@@ -14,8 +14,10 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from pulsar_relay.api import auth, device, health, messages, oidc, polling, topics, websocket
+from pulsar_relay.auth.denylist import InMemoryJWTDenylist, JWTDenylistStorage, ValkeyJWTDenylist
 from pulsar_relay.auth.dependencies import (
     set_device_code_storage,
+    set_jwt_denylist,
     set_oidc_clients,
     set_oidc_state_storage,
     set_refresh_token_storage,
@@ -94,7 +96,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         refresh_storage: RefreshTokenStorage = ValkeyRefreshTokenStorage(storage._client)
         device_storage: DeviceCodeStorage = ValkeyDeviceCodeStorage(storage._client)
         oidc_state_storage: OIDCStateStorage = ValkeyOIDCStateStorage(storage._client)
-        log.info("Initialized Valkey refresh/device/oidc-state storage")
+        jwt_denylist: JWTDenylistStorage = ValkeyJWTDenylist(storage._client)
+        log.info("Initialized Valkey refresh/device/oidc-state/jwt-denylist storage")
     else:
         log.info("Using in-memory storage backend")
         storage = MemoryStorage(max_messages_per_topic=settings.max_messages_per_topic)
@@ -106,7 +109,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         refresh_storage = InMemoryRefreshTokenStorage()
         device_storage = InMemoryDeviceCodeStorage()
         oidc_state_storage = InMemoryOIDCStateStorage()
-        log.info("Initialized in-memory refresh/device/oidc-state storage")
+        jwt_denylist = InMemoryJWTDenylist()
+        log.info("Initialized in-memory refresh/device/oidc-state/jwt-denylist storage")
 
     # Initialize connection manager
     connection_manager = ConnectionManager()
@@ -141,6 +145,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     set_refresh_token_storage(refresh_storage)
     set_device_code_storage(device_storage)
     set_oidc_state_storage(oidc_state_storage)
+    set_jwt_denylist(jwt_denylist)
 
     # Build OIDC clients (one per configured provider). Empty when oidc.enabled=False.
     oidc_clients: dict[str, OIDCClient] = {}

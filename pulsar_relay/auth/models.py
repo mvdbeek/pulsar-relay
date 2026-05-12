@@ -121,6 +121,13 @@ class TokenPayload(BaseModel):
     permissions: list[Permission] = Field(default_factory=list)
     exp: int = Field(..., description="Expiration timestamp")
     iat: int = Field(..., description="Issued at timestamp")
+    jti: Optional[str] = Field(
+        None,
+        description="JWT ID — unique per token. Set by create_access_token "
+        "so /auth/logout can deny-list the specific token. Older tokens "
+        "issued before this field landed have jti=None and cannot be "
+        "deny-listed (they expire on their own).",
+    )
 
 
 class Topic(BaseModel):

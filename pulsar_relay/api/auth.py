@@ -8,9 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 
+from pulsar_relay.auth.denylist import seconds_until_exp
 from pulsar_relay.auth.dependencies import (
     get_current_user,
+    get_jwt_denylist,
     get_refresh_token_storage,
+    get_token_payload,
     get_user_storage,
     require_permission,
 )
@@ -21,6 +24,7 @@ from pulsar_relay.auth.jwt import (
     verify_password,
 )
 from pulsar_relay.auth.models import (
+    TokenPayload,
     TokenResponse,
     User,
     UserCreate,
@@ -29,6 +33,7 @@ from pulsar_relay.auth.models import (
 )
 from pulsar_relay.auth.refresh import RefreshTokenError, split_wire_token, verify_and_consume
 from pulsar_relay.config import settings
+from pulsar_relay.core.cache import user_cache
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +149,30 @@ async def register(
         )
 
 
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(
+    token_payload: TokenPayload = Depends(get_token_payload),
+) -> None:
+    """Deny-list the bearer access token so it cannot be reused.
+
+    Adds the JWT's ``jti`` to the deny-list with TTL = remaining access
+    lifetime. Subsequent requests bearing this exact token return 401.
+    Other access tokens for the same user (issued concurrently from
+    other sessions) are unaffected — use ``/auth/sessions/{jti}`` on the
+    refresh-token side to kill long-lived sessions.
+
+    Returns 204 in all cases; if the token has no ``jti`` (legacy
+    tokens issued before the claim landed) the call is a no-op.
+    """
+    if token_payload.jti is None:
+        logger.info("logout: token has no jti — no-op (legacy token)")
+        return
+    denylist = get_jwt_denylist()
+    ttl = seconds_until_exp(token_payload.exp)
+    await denylist.add(token_payload.jti, ttl)
+    logger.info("logout: deny-listed jti=%s for %ds", token_payload.jti, ttl)
+
+
 @router.get("/me", response_model=UserPublic)
 async def get_current_user_info(
     current_user: User = Depends(get_current_user),
@@ -246,6 +275,11 @@ async def update_user(
     # Update the user in storage
     try:
         updated_user = await storage.update_user(user)
+        # Invalidate the worker-local user cache so the next request
+        # bearing the affected user's JWT re-reads is_active /
+        # permissions from storage (closes Auth H#7 — disabling or
+        # demoting a user used to take effect only after cache TTL).
+        user_cache.invalidate(f"user:{user_id}")
         logger.info(f"Admin {current_user.username} updated user {updated_user.username} ({user_id})")
 
         return UserPublic(
@@ -324,6 +358,8 @@ async def delete_user(
             detail="Failed to delete user",
         )
 
+    # Invalidate the worker-local user cache — see update_user above.
+    user_cache.invalidate(f"user:{user_id}")
     logger.info(f"Admin {current_user.username} deleted user {user_to_delete.username} ({user_id})")
 
 
@@ -367,9 +403,21 @@ async def refresh_token(payload: RefreshRequest, request: Request) -> TokenRespo
         await storage.mark_revoked(old.jti, "logout")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="user not found")
 
-    # Mark the consumed token as rotated; this is what triggers chain
-    # revocation if it ever shows up again.
-    await storage.mark_revoked(old.jti, "rotated")
+    # Atomic check-then-set: transition revoked=0 -> 1, reason=rotated.
+    # If this fails the token was already consumed by a concurrent
+    # rotation — treat as a replay attempt and tear down the chain.
+    if not await storage.try_mark_rotated(old.jti):
+        revoked = await storage.revoke_chain(old.jti, "replay")
+        logger.warning(
+            "Refresh-token rotation race lost for jti=%s — revoked %d chain tokens",
+            old.jti,
+            revoked,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     await storage.mark_used(old.jti)
 
     _, new_wire = await storage.create(

@@ -272,6 +272,17 @@ class Settings(BaseSettings):
         "value (1 MiB by default). Applied by the body-size middleware.",
     )
 
+    # Access-token lifetime. Kept deliberately short (10 minutes by
+    # default) because access tokens are bearer credentials and we now
+    # honour an emergency-revoke deny-list keyed by jti. Long-lived
+    # sessions are maintained via the refresh-token rotation chain.
+    access_token_expire_minutes: int = Field(
+        default=10,
+        ge=1,
+        le=120,
+        description="Access-token lifetime in minutes.",
+    )
+
     # Refresh tokens & device flow
     refresh_token_ttl_days: int = Field(
         default=90,

@@ -1,6 +1,7 @@
 """JWT token utilities."""
 
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -16,7 +17,6 @@ logger = logging.getLogger(__name__)
 pwd_context = PasswordHash.recommended()
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60  # 1 hour
 
 
 def _get_secret_key() -> str:
@@ -28,6 +28,13 @@ def _get_secret_key() -> str:
     from pulsar_relay.config import settings
 
     return settings.jwt_secret_key
+
+
+def _get_expire_minutes() -> int:
+    """Resolve the access-token lifetime from settings at call time."""
+    from pulsar_relay.config import settings
+
+    return settings.access_token_expire_minutes
 
 
 def hash_password(password: str) -> str:
@@ -70,14 +77,18 @@ def create_access_token(user: User, expires_delta: Optional[timedelta] = None) -
     if expires_delta:
         expire = now + expires_delta
     else:
-        expire = now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = now + timedelta(minutes=_get_expire_minutes())
 
+    # ``jti`` is a per-token UUID so /auth/logout can deny-list this
+    # specific token without revoking other concurrent sessions for the
+    # same user.
     to_encode = {
         "sub": user.user_id,
         "username": user.username,
         "permissions": user.permissions,
         "exp": int(expire.timestamp()),
         "iat": int(now.timestamp()),
+        "jti": uuid.uuid4().hex,
     }
 
     encoded_jwt = jwt.encode(to_encode, _get_secret_key(), algorithm=ALGORITHM)
@@ -116,4 +127,4 @@ def get_token_expiration_seconds() -> int:
     Returns:
         Token expiration time in seconds
     """
-    return ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    return _get_expire_minutes() * 60
