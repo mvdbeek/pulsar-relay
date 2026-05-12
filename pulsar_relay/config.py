@@ -19,6 +19,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
+#: Sentinel default for ``jwt_secret_key``. The startup guard refuses to boot
+#: when the live value equals this constant (unless ``allow_insecure_defaults``
+#: is set). Exported so tests can reference it without hard-coding the literal.
+_DEFAULT_JWT_SECRET = "your-secret-key-here-change-in-production"
+
+#: Minimum acceptable length for ``jwt_secret_key``. 32 chars is short for true
+#: cryptographic strength but matches the longest legacy fixture and prevents
+#: trivially-weak picks like "changeme".
+_MIN_JWT_SECRET_LEN = 32
+
 
 def load_config_file(config_path: Optional[Path] = None) -> dict[str, Any]:
     """Load configuration from TOML or YAML file.
@@ -183,6 +193,19 @@ class Settings(BaseSettings):
         default=False,
         description="Use TLS for Valkey connection",
     )
+    valkey_username: Optional[str] = Field(
+        default=None,
+        description="Valkey ACL username (None = use legacy requirepass auth)",
+    )
+    valkey_password: Optional[str] = Field(
+        default=None,
+        description="Valkey password / ACL password. Required in production "
+        "(startup refuses to boot without it unless allow_insecure_defaults).",
+    )
+    valkey_ca_path: Optional[str] = Field(
+        default=None,
+        description="Path to a CA bundle for TLS to Valkey. Only consulted when " "valkey_use_tls is True.",
+    )
 
     # Storage Configuration
     persistent_tier_retention: int = Field(
@@ -204,8 +227,16 @@ class Settings(BaseSettings):
 
     # Authentication
     jwt_secret_key: str = Field(
-        default="your-secret-key-here-change-in-production",
+        default=_DEFAULT_JWT_SECRET,
         description="JWT secret key for token signing (CHANGE IN PRODUCTION!)",
+    )
+
+    # Startup safety
+    allow_insecure_defaults: bool = Field(
+        default=False,
+        description="Bypass the startup guard that refuses to boot on default/"
+        "missing secrets. Intended for local-dev compose and the test suite "
+        "only; never set in production.",
     )
 
     # Refresh tokens & device flow
@@ -335,13 +366,68 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
     logger.info(f"  Storage backend: {settings.storage_backend}")
     logger.info(f"  Log level: {settings.log_level}")
 
-    if settings.jwt_secret_key == "your-secret-key-here-change-in-production":
-        logger.warning(
-            "⚠️  WARNING: Using default JWT secret key! "
-            "Set PULSAR_JWT_SECRET_KEY environment variable in production!"
-        )
-
     return settings
+
+
+class InsecureDefaultsError(SystemExit):
+    """Raised at startup when settings contain insecure defaults.
+
+    Subclasses :class:`SystemExit` so an unhandled raise propagates as a
+    process exit with the same exit code, but tests can still
+    ``pytest.raises(InsecureDefaultsError)`` for fine-grained assertions.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(2)
+        self.message = message
+
+    def __str__(self) -> str:
+        return self.message
+
+
+def validate_startup_secrets(settings: Settings) -> None:
+    """Refuse to start when any required secret is missing or at a default.
+
+    Checks (each raises :class:`InsecureDefaultsError` with a precise reason):
+
+    * ``jwt_secret_key`` is the shipped default sentinel
+    * ``jwt_secret_key`` is shorter than ``_MIN_JWT_SECRET_LEN`` characters
+    * ``bootstrap_admin_password`` is unset
+    * ``valkey_password`` is unset while the Valkey backend is selected
+
+    Bypassed entirely when ``settings.allow_insecure_defaults`` is True —
+    used by tests and the local-dev compose. Production deployments must
+    leave the flag at its default (False).
+    """
+    if settings.allow_insecure_defaults:
+        logger.warning(
+            "PULSAR_ALLOW_INSECURE_DEFAULTS=1 — startup secret guard bypassed. "
+            "This is unsafe outside local-dev / tests."
+        )
+        return
+
+    if settings.jwt_secret_key == _DEFAULT_JWT_SECRET:
+        raise InsecureDefaultsError(
+            "Refusing to start: PULSAR_JWT_SECRET_KEY is the shipped default value. "
+            "Generate a strong secret (e.g. `python -c 'import secrets; "
+            "print(secrets.token_urlsafe(32))'`) and set PULSAR_JWT_SECRET_KEY. "
+            "To bypass for local-dev/tests set PULSAR_ALLOW_INSECURE_DEFAULTS=1."
+        )
+    if len(settings.jwt_secret_key) < _MIN_JWT_SECRET_LEN:
+        raise InsecureDefaultsError(
+            f"Refusing to start: PULSAR_JWT_SECRET_KEY is shorter than " f"{_MIN_JWT_SECRET_LEN} characters."
+        )
+    if not settings.bootstrap_admin_password:
+        raise InsecureDefaultsError(
+            "Refusing to start: PULSAR_BOOTSTRAP_ADMIN_PASSWORD is not set. "
+            "The bootstrap admin is required to administer the relay."
+        )
+    if settings.storage_backend == "valkey" and not settings.valkey_password:
+        raise InsecureDefaultsError(
+            "Refusing to start: PULSAR_VALKEY_PASSWORD is not set while "
+            "PULSAR_STORAGE_BACKEND=valkey. The Valkey instance must require "
+            "authentication."
+        )
 
 
 # Global settings instance

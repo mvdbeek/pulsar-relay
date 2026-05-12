@@ -62,6 +62,14 @@ jobs:
     env:
       # Enable the integration tests that check for a running Valkey instance
       VALKEY_INTEGRATION_TEST: '1'
+      # The GitHub Actions ``services:`` container syntax does not let us
+      # override the Valkey CMD to pass ``--requirepass``, so the runner
+      # Valkey accepts unauthenticated connections. The startup guard would
+      # otherwise refuse to boot when PULSAR_STORAGE_BACKEND=valkey without
+      # a password. The escape hatch is acceptable on an ephemeral runner;
+      # the guard's real-secret failure modes are unit-tested in
+      # tests/test_startup_guard.py.
+      PULSAR_ALLOW_INSECURE_DEFAULTS: '1'
 
     steps:
       - name: Checkout

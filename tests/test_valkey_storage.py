@@ -223,21 +223,28 @@ class TestValkeyStorage:
         assert "error" in health
 
     @pytest.mark.anyio
-    async def test_clear(self, valkey_storage):
-        """Test clearing all topics."""
-        # Mock scan to return some keys
+    async def test_reset_helper_uses_scan_and_delete(self, valkey_storage):
+        """The ``tests._storage_helpers.reset_valkey_storage`` helper resets
+        a Valkey DB via ``SCAN`` + ``DEL``. ValkeyStorage no longer exposes
+        ``clear()`` because ``FLUSHALL`` is renamed in the hardened
+        ``valkey.conf``."""
+        from tests._storage_helpers import reset_valkey_storage
+
         valkey_storage._client.scan = AsyncMock(
             side_effect=[
-                ("5", [b"stream:topic:topic1", b"stream:topic:topic2"]),
-                ("0", [b"stream:topic:topic3"]),
+                [b"5", [b"stream:topic:topic1", b"stream:topic:topic2"]],
+                [b"0", [b"stream:topic:topic3"]],
             ]
         )
         valkey_storage._client.delete = AsyncMock()
 
-        await valkey_storage.clear()
+        await reset_valkey_storage(valkey_storage)
 
-        # Verify all keys were deleted
-        valkey_storage._client.flushall.assert_called_once()
+        # Two scan iterations, two delete batches.
+        assert valkey_storage._client.scan.await_count == 2
+        assert valkey_storage._client.delete.await_count == 2
+        # ValkeyStorage no longer has a flushall escape hatch.
+        assert not hasattr(valkey_storage, "clear")
 
     @pytest.mark.anyio
     async def test_not_connected_error(self):
@@ -255,9 +262,6 @@ class TestValkeyStorage:
 
         with pytest.raises(RuntimeError, match="Not connected to Valkey"):
             await storage.get_topic_length("topic")
-
-        with pytest.raises(RuntimeError, match="Not connected to Valkey"):
-            await storage.clear()
 
     @pytest.mark.anyio
     async def test_connect_disconnect(self):
@@ -299,6 +303,8 @@ async def test_valkey_integration():
     This test requires a running Valkey instance on localhost:6379.
     Skip if Valkey is not available.
     """
+    from tests._storage_helpers import reset_valkey_storage
+
     storage = ValkeyStorage(host="localhost", port=6379, max_messages_per_topic=100)
 
     try:
@@ -306,7 +312,7 @@ async def test_valkey_integration():
         await storage.connect()
 
         # Clear any existing test data
-        await storage.clear()
+        await reset_valkey_storage(storage)
 
         # Test save and retrieve
         timestamp = datetime(2025, 1, 1, 12, 0, 0)
@@ -334,7 +340,7 @@ async def test_valkey_integration():
         assert health["status"] == "healthy"
 
         # Cleanup
-        await storage.clear()
+        await reset_valkey_storage(storage)
 
     except Exception as e:
         pytest.skip(f"Valkey not available: {e}")

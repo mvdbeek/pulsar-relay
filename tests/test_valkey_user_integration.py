@@ -15,6 +15,7 @@ from glide import GlideClient, GlideClientConfiguration, NodeAddress
 
 from pulsar_relay.auth.models import User, UserCreate
 from pulsar_relay.auth.storage import ValkeyUserStorage
+from tests._storage_helpers import reset_valkey_client
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("VALKEY_INTEGRATION_TEST"), reason="VALKEY_INTEGRATION_TEST environment variable not set"
@@ -40,13 +41,13 @@ async def valkey_user_storage(valkey_client):
     storage = ValkeyUserStorage(client=valkey_client)
 
     # Clear any existing test users
-    await valkey_client.flushall()
+    await reset_valkey_client(valkey_client)
 
     yield storage
 
     # Cleanup after tests
     try:
-        await valkey_client.flushall()
+        await reset_valkey_client(valkey_client)
     except Exception:
         pass
 
@@ -484,7 +485,7 @@ async def test_full_workflow():
 
     try:
         # Clear any existing data
-        await client.flushall()
+        await reset_valkey_client(client)
 
         # Create storage
         storage = ValkeyUserStorage(client=client)
@@ -530,7 +531,7 @@ async def test_full_workflow():
         assert deleted_user is None
 
         # Clear
-        await client.flushall()
+        await reset_valkey_client(client)
 
     finally:
         # Cleanup

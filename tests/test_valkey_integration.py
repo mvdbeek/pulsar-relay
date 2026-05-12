@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from pulsar_relay.storage.valkey import ValkeyStorage
+from tests._storage_helpers import reset_valkey_storage
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("VALKEY_INTEGRATION_TEST"), reason="VALKEY_INTEGRATION_TEST environment variable not set"
@@ -32,12 +33,12 @@ async def valkey_storage():
     try:
         await storage.connect()
         # Clear any existing test data
-        await storage.clear()
+        await reset_valkey_storage(storage)
         yield storage
     finally:
         # Cleanup after tests
         try:
-            await storage.clear()
+            await reset_valkey_storage(storage)
         except Exception:
             pass
         await storage.disconnect()
@@ -460,7 +461,7 @@ class TestValkeyIntegrationCleanup:
             assert length == 10
 
         # Clear all topics
-        await valkey_storage.clear()
+        await reset_valkey_storage(valkey_storage)
 
         # Verify all topics are cleared
         for topic_idx in range(5):
@@ -489,7 +490,7 @@ async def test_full_workflow():
         assert storage._connected is True
 
         # Clear any existing data
-        await storage.clear()
+        await reset_valkey_storage(storage)
 
         # Write messages
         base_time = datetime(2025, 1, 1, 12, 0, 0)
@@ -526,7 +527,7 @@ async def test_full_workflow():
         assert health["status"] == "healthy"
 
         # Clear
-        await storage.clear()
+        await reset_valkey_storage(storage)
 
         final_length = await storage.get_topic_length("workflow-test")
         assert final_length == 0

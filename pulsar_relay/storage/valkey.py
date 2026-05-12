@@ -5,7 +5,16 @@ import logging
 from datetime import datetime
 from typing import Any, Optional, Union, cast
 
-from glide import ExclusiveIdBound, GlideClient, GlideClientConfiguration, MaxId, MinId, NodeAddress, TrimByMaxLen
+from glide import (
+    ExclusiveIdBound,
+    GlideClient,
+    GlideClientConfiguration,
+    MaxId,
+    MinId,
+    NodeAddress,
+    ServerCredentials,
+    TrimByMaxLen,
+)
 
 from pulsar_relay.storage.base import StorageBackend
 
@@ -26,6 +35,8 @@ class ValkeyStorage(StorageBackend):
         max_messages_per_topic: int = 1000000,
         ttl_seconds: int = 3600,
         use_tls: bool = False,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
     ):
         """Initialize Valkey storage backend.
 
@@ -35,12 +46,18 @@ class ValkeyStorage(StorageBackend):
             max_messages_per_topic: Maximum messages per topic before trimming
             ttl_seconds: Time-to-live for messages in seconds
             use_tls: Whether to use TLS for connection
+            username: Valkey ACL username (None falls back to legacy
+                requirepass authentication when ``password`` is supplied).
+            password: Valkey password / ACL password. None disables AUTH —
+                only acceptable in test/dev configurations.
         """
         self.host = host
         self.port = port
         self.max_messages_per_topic = max_messages_per_topic
         self.ttl_seconds = ttl_seconds
         self.use_tls = use_tls
+        self.username = username
+        self.password = password
         self._client: Optional[GlideClient] = None
         self._connected = False
 
@@ -50,10 +67,17 @@ class ValkeyStorage(StorageBackend):
             return
 
         try:
+            credentials: Optional[ServerCredentials] = None
+            if self.password is not None:
+                credentials = ServerCredentials(
+                    username=self.username,
+                    password=self.password,
+                )
             config = GlideClientConfiguration(
                 addresses=[NodeAddress(host=self.host, port=self.port)],
                 use_tls=self.use_tls,
                 request_timeout=5000,  # 5 second timeout
+                credentials=credentials,
             )
             self._client = await GlideClient.create(config)
             self._connected = True
@@ -319,18 +343,3 @@ class ValkeyStorage(StorageBackend):
     async def close(self) -> None:
         """Close the Valkey connection."""
         await self.disconnect()
-
-    async def clear(self) -> None:
-        """Clear all messages from all topics (for testing only).
-
-        WARNING: This deletes all stream data.
-        """
-        if not self._client:
-            raise RuntimeError("Not connected to Valkey")
-
-        try:
-            await self._client.flushall()
-
-        except Exception as e:
-            logger.error(f"Failed to clear Valkey data: {e}")
-            raise

@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from pulsar_relay.config import Settings, load_config_file, load_settings
+from pulsar_relay.config import (
+    _DEFAULT_JWT_SECRET,
+    Settings,
+    load_config_file,
+    load_settings,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -187,12 +192,26 @@ storage_backend = "memory"
         finally:
             Path(config_path).unlink()
 
-    def test_load_settings_default_jwt_warning(self, caplog):
-        """Test that warning is logged when using default JWT secret."""
-        settings = load_settings()
+    def test_load_settings_uses_env_jwt_secret(self, monkeypatch):
+        """``load_settings`` honours PULSAR_JWT_SECRET_KEY from the environment.
 
-        # Should log warning about default JWT secret
-        assert settings.jwt_secret_key == "your-secret-key-here-change-in-production"
+        The conftest sets a random secret at session start so the relay's
+        startup guard accepts it; ``load_settings`` should return the value
+        the operator supplied rather than the sentinel default.
+        """
+        # Conftest already set this; assert the loader picked it up.
+        env_value = os.environ["PULSAR_JWT_SECRET_KEY"]
+        assert env_value != _DEFAULT_JWT_SECRET
+        settings = load_settings()
+        assert settings.jwt_secret_key == env_value
+
+    def test_default_jwt_secret_constant_unchanged(self):
+        """The startup guard refuses to boot when ``jwt_secret_key`` equals
+        :data:`pulsar_relay.config._DEFAULT_JWT_SECRET`. The sentinel must
+        match the historical default so deployments that left the field
+        unset hit the guard rather than silently accepting an empty string.
+        """
+        assert _DEFAULT_JWT_SECRET == "your-secret-key-here-change-in-production"
 
 
 class TestConfigValidation:
