@@ -9,6 +9,9 @@ from typing import Union
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
+from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from pulsar_relay.api import auth, device, health, messages, oidc, polling, topics, websocket
 from pulsar_relay.auth.dependencies import (
@@ -231,6 +234,66 @@ app = FastAPI(
 )
 
 
+class BodySizeLimitMiddleware:
+    """Reject HTTP requests whose Content-Length exceeds ``max_bytes``.
+
+    Implemented as a raw ASGI middleware so the rejection happens before
+    the body is buffered by FastAPI / Pydantic — a 100 MiB payload never
+    makes it into memory. WebSocket upgrades are passed through
+    unchanged.
+    """
+
+    def __init__(self, app: ASGIApp, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        for name, value in scope.get("headers", ()):
+            if name == b"content-length":
+                try:
+                    declared = int(value)
+                except ValueError:
+                    declared = -1
+                if declared > self.max_bytes:
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": 413,
+                            "headers": [(b"content-type", b"application/json")],
+                        }
+                    )
+                    await send(
+                        {
+                            "type": "http.response.body",
+                            "body": b'{"error":"PAYLOAD_TOO_LARGE","message":"request body exceeds configured limit"}',
+                        }
+                    )
+                    return
+                break
+        await self.app(scope, receive, send)
+
+
+# Order matters: TrustedHost runs first (cheapest reject), then CORS,
+# then body-size. CORS runs *after* TrustedHost so a hostile Host header
+# is rejected before CORS preflights advertise allowed origins. The
+# body-size middleware runs *inside* CORS so CORS preflights for big
+# requests still get the right CORS headers on the 413 — Starlette nests
+# user_middleware in registration order, with the first .add_middleware
+# call ending up outermost.
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_body_bytes)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.allowed_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts)
+
+
 # Include routers
 app.include_router(health.router)
 app.include_router(auth.router, prefix="/auth", tags=["authentication"])
@@ -247,12 +310,17 @@ Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
-    """Global exception handler."""
+    """Global exception handler.
+
+    Never leaks ``str(exc)`` to clients — internal hostnames, Pydantic
+    field names, and library error strings have been observed in past
+    incidents. Operators get the full traceback via the server logs.
+    """
+    log.exception("Unhandled exception serving %s %s", request.method, request.url.path)
     return JSONResponse(
         status_code=500,
         content={
             "error": "INTERNAL_ERROR",
             "message": "An internal error occurred",
-            "details": str(exc) if settings.log_level == "DEBUG" else None,
         },
     )

@@ -73,6 +73,11 @@ services:
       PULSAR_VALKEY_HOST: valkey
       PULSAR_VALKEY_PORT: "6379"
       PULSAR_VALKEY_PASSWORD: local-dev-valkey-password
+      # Transport allow-lists. Both are required in prod; the local-dev
+      # compose binds the relay to localhost:9000 with the Keycloak
+      # browser-flow base URL.
+      PULSAR_ALLOWED_ORIGINS: '["http://localhost:9000", "http://localhost:8080"]'
+      PULSAR_TRUSTED_HOSTS: '["localhost", "127.0.0.1"]'
       # OIDC.
       PULSAR_OIDC__ENABLED: "true"
       PULSAR_OIDC__BASE_URL: http://localhost:9000

@@ -132,6 +132,27 @@ async def list_topics(
     ]
 
 
+# Note: ``/stats`` must be declared BEFORE ``/{topic_name}`` so FastAPI's
+# longest-static-prefix routing matches it. If reordered back, requests
+# to GET /api/v1/topics/stats would be matched by get_topic(topic_name="stats")
+# — a non-admin endpoint — and the admin permission check below would
+# never run. See security review API H#6.
+@router.get("/stats", response_model=dict[str, Any])
+async def get_topic_stats(
+    current_user: User = Depends(require_permission("admin")),
+) -> dict[str, Any]:
+    """Get topic statistics (admin only).
+
+    Args:
+        current_user: Current authenticated admin user
+
+    Returns:
+        Topic statistics
+    """
+    topic_storage = get_topic_storage()
+    return await topic_storage.get_stats()
+
+
 @router.get("/{topic_name}", response_model=TopicPublic)
 async def get_topic(
     topic_name: str,
@@ -563,19 +584,3 @@ async def list_topic_permissions(
             )
 
     return permissions
-
-
-@router.get("/stats", response_model=dict[str, Any])
-async def get_topic_stats(
-    current_user: User = Depends(require_permission("admin")),
-) -> dict[str, Any]:
-    """Get topic statistics (admin only).
-
-    Args:
-        current_user: Current authenticated admin user
-
-    Returns:
-        Topic statistics
-    """
-    topic_storage = get_topic_storage()
-    return await topic_storage.get_stats()

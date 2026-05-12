@@ -239,6 +239,39 @@ class Settings(BaseSettings):
         "only; never set in production.",
     )
 
+    # HTTP transport safety (CORS, host headers, WebSocket caps).
+    # Empty defaults are refused by the startup guard unless
+    # ``allow_insecure_defaults`` is set, so a misconfigured prod deploy
+    # fails closed rather than silently accepting cross-origin traffic.
+    allowed_origins: list[str] = Field(
+        default_factory=list,
+        description="Allow-list of HTTP Origin values for CORS and "
+        "WebSocket Origin enforcement. Set explicitly; never use '*'.",
+    )
+    trusted_hosts: list[str] = Field(
+        default_factory=list,
+        description="Allow-list of Host header values accepted by "
+        "TrustedHostMiddleware. Required to defend against Host-header "
+        "spoofing when behind a reverse proxy.",
+    )
+    ws_max_per_user: int = Field(
+        default=10,
+        ge=1,
+        description="Maximum concurrent /ws connections per authenticated user.",
+    )
+    ws_idle_seconds: int = Field(
+        default=60,
+        ge=5,
+        description="Disconnect a WebSocket client that sends no frame within "
+        "this many seconds. Defends against slow-loris connections.",
+    )
+    max_body_bytes: int = Field(
+        default=1_048_576,
+        ge=1024,
+        description="Reject HTTP requests with Content-Length above this "
+        "value (1 MiB by default). Applied by the body-size middleware.",
+    )
+
     # Refresh tokens & device flow
     refresh_token_ttl_days: int = Field(
         default=90,
@@ -427,6 +460,18 @@ def validate_startup_secrets(settings: Settings) -> None:
             "Refusing to start: PULSAR_VALKEY_PASSWORD is not set while "
             "PULSAR_STORAGE_BACKEND=valkey. The Valkey instance must require "
             "authentication."
+        )
+    if not settings.allowed_origins:
+        raise InsecureDefaultsError(
+            "Refusing to start: PULSAR_ALLOWED_ORIGINS is empty. Set the "
+            "CORS / WebSocket Origin allow-list to the exact list of origins "
+            "browsers will use (e.g. PULSAR_ALLOWED_ORIGINS='[\"https://relay.example.com\"]')."
+        )
+    if not settings.trusted_hosts:
+        raise InsecureDefaultsError(
+            "Refusing to start: PULSAR_TRUSTED_HOSTS is empty. Set the "
+            "list of Host header values your reverse proxy forwards "
+            "(e.g. PULSAR_TRUSTED_HOSTS='[\"relay.example.com\"]')."
         )
 
 

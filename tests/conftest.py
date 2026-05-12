@@ -17,6 +17,11 @@ os.environ.setdefault("PULSAR_JWT_SECRET_KEY", secrets.token_urlsafe(32))
 os.environ.setdefault("PULSAR_BOOTSTRAP_ADMIN_PASSWORD", secrets.token_urlsafe(16))
 if os.environ.get("PULSAR_ALLOW_INSECURE_DEFAULTS") != "1":
     os.environ.setdefault("PULSAR_VALKEY_PASSWORD", secrets.token_urlsafe(16))
+# CORS / TrustedHost allow-lists: tests use the FastAPI TestClient which
+# sends Host=testserver and Origin=http://testserver — accept both. Real
+# deployments configure these explicitly via env vars.
+os.environ.setdefault("PULSAR_ALLOWED_ORIGINS", '["http://testserver", "http://test"]')
+os.environ.setdefault("PULSAR_TRUSTED_HOSTS", '["testserver", "test", "localhost", "127.0.0.1"]')
 
 import httpx  # noqa: E402
 import pytest  # noqa: E402

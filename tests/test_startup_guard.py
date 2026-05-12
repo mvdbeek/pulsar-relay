@@ -27,6 +27,8 @@ from pulsar_relay.config import (
 _STRONG_JWT = "x" * 64
 _STRONG_ADMIN_PW = "strong-bootstrap-admin-password"
 _STRONG_VALKEY_PW = "strong-valkey-password"
+_GOOD_ORIGINS = '["https://relay.example.com"]'
+_GOOD_HOSTS = '["relay.example.com"]'
 
 
 @pytest.fixture
@@ -36,6 +38,8 @@ def good_env(monkeypatch) -> None:
     monkeypatch.setenv("PULSAR_BOOTSTRAP_ADMIN_PASSWORD", _STRONG_ADMIN_PW)
     monkeypatch.setenv("PULSAR_STORAGE_BACKEND", "valkey")
     monkeypatch.setenv("PULSAR_VALKEY_PASSWORD", _STRONG_VALKEY_PW)
+    monkeypatch.setenv("PULSAR_ALLOWED_ORIGINS", _GOOD_ORIGINS)
+    monkeypatch.setenv("PULSAR_TRUSTED_HOSTS", _GOOD_HOSTS)
     monkeypatch.delenv("PULSAR_ALLOW_INSECURE_DEFAULTS", raising=False)
 
 
@@ -73,6 +77,18 @@ def test_allows_missing_valkey_password_when_memory_backend(good_env, monkeypatc
     monkeypatch.setenv("PULSAR_STORAGE_BACKEND", "memory")
     monkeypatch.delenv("PULSAR_VALKEY_PASSWORD")
     validate_startup_secrets(Settings())
+
+
+def test_rejects_empty_allowed_origins(good_env, monkeypatch) -> None:
+    monkeypatch.setenv("PULSAR_ALLOWED_ORIGINS", "[]")
+    with pytest.raises(InsecureDefaultsError, match="ALLOWED_ORIGINS"):
+        validate_startup_secrets(Settings())
+
+
+def test_rejects_empty_trusted_hosts(good_env, monkeypatch) -> None:
+    monkeypatch.setenv("PULSAR_TRUSTED_HOSTS", "[]")
+    with pytest.raises(InsecureDefaultsError, match="TRUSTED_HOSTS"):
+        validate_startup_secrets(Settings())
 
 
 def test_escape_hatch_bypasses_all_checks(monkeypatch) -> None:
