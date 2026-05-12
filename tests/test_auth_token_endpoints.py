@@ -2,6 +2,8 @@
 
 import pytest
 
+from pulsar_relay.auth.dependencies import get_device_code_storage
+
 
 @pytest.mark.anyio
 async def test_login_returns_refresh_token(test_client_with_auth):
@@ -80,3 +82,104 @@ async def test_device_code_endpoint_requires_oidc(test_client_with_auth):
     assert resp.status_code == 400
     body = resp.json()
     assert body["error"] == "device_authorization_unavailable"
+
+
+@pytest.mark.anyio
+async def test_device_token_with_pair_issues_two_refresh_tokens(test_client_with_auth, admin_user):
+    """Galaxy BYOC bootstrap path: when ``pair=true`` was set at
+    /auth/device/code, the /auth/device/token response carries a
+    ``refresh_token_secondary`` alongside ``refresh_token`` — two
+    independent tokens, no shared rotation chain."""
+    from datetime import timedelta
+
+    storage = get_device_code_storage()
+    record, device_code = await storage.create(
+        verification_uri="https://relay.test/auth/device",
+        verification_uri_complete_template="https://relay.test/auth/device?user_code={user_code}",
+        ttl=timedelta(minutes=10),
+        client_hint="byoc",
+        pair=True,
+    )
+    # Simulate operator approval in lieu of the real OIDC redirect.
+    await storage.approve(record.user_code, admin_user.user_id)
+
+    resp = test_client_with_auth.post(
+        "/auth/device/token",
+        data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            "device_code": device_code,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["access_token"]
+    assert body["refresh_token"]
+    assert body["refresh_token_secondary"]
+    assert body["refresh_token"] != body["refresh_token_secondary"]
+
+
+@pytest.mark.anyio
+async def test_device_token_without_pair_returns_single_token(test_client_with_auth, admin_user):
+    """Backward-compat: callers that omit ``pair`` get the single-token
+    response shape they got before this change."""
+    from datetime import timedelta
+
+    storage = get_device_code_storage()
+    record, device_code = await storage.create(
+        verification_uri="https://relay.test/auth/device",
+        verification_uri_complete_template="https://relay.test/auth/device?user_code={user_code}",
+        ttl=timedelta(minutes=10),
+    )
+    await storage.approve(record.user_code, admin_user.user_id)
+
+    resp = test_client_with_auth.post(
+        "/auth/device/token",
+        data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            "device_code": device_code,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["refresh_token"]
+    assert "refresh_token_secondary" not in body
+
+
+@pytest.mark.anyio
+async def test_paired_refresh_tokens_rotate_independently(test_client_with_auth, admin_user):
+    """The two refresh tokens issued together must rotate on separate
+    chains: rotating one (and replaying it) must not revoke the other."""
+    from datetime import timedelta
+
+    storage = get_device_code_storage()
+    record, device_code = await storage.create(
+        verification_uri="https://relay.test/auth/device",
+        verification_uri_complete_template="https://relay.test/auth/device?user_code={user_code}",
+        ttl=timedelta(minutes=10),
+        pair=True,
+    )
+    await storage.approve(record.user_code, admin_user.user_id)
+    body = test_client_with_auth.post(
+        "/auth/device/token",
+        data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            "device_code": device_code,
+        },
+    ).json()
+    primary, secondary = body["refresh_token"], body["refresh_token_secondary"]
+
+    # Rotate the primary; the rotation chain is local to the primary token,
+    # not the secondary.
+    rotated_primary = test_client_with_auth.post("/auth/token/refresh", json={"refresh_token": primary}).json()
+    assert rotated_primary["refresh_token"] != primary
+
+    # Replay of the original primary would normally revoke the user's whole
+    # chain — but the secondary belongs to a different chain, so it must
+    # still work after the replay attempt is rejected.
+    replay = test_client_with_auth.post("/auth/token/refresh", json={"refresh_token": primary})
+    assert replay.status_code == 401
+
+    # Secondary still refreshes cleanly.
+    rotated_secondary = test_client_with_auth.post("/auth/token/refresh", json={"refresh_token": secondary})
+    assert rotated_secondary.status_code == 200, rotated_secondary.text
+    assert rotated_secondary.json()["refresh_token"] != secondary

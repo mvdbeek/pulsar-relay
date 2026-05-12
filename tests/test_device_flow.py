@@ -90,3 +90,34 @@ async def test_deny_flow():
     # Re-denying or approving after denial is a no-op (returns None).
     assert await storage.approve(record.user_code, "user-42") is None
     assert await storage.deny(record.user_code) is None
+
+
+@pytest.mark.anyio
+async def test_pair_flag_round_trips_through_storage():
+    """Galaxy BYOC bootstrap sets ``pair=True`` on ``/auth/device/code`` to
+    request two independent refresh tokens at issuance time. The flag must
+    survive the storage layer so the token-poll endpoint can read it back."""
+    storage = InMemoryDeviceCodeStorage()
+    record, device_code = await storage.create(
+        verification_uri="https://relay/auth/device",
+        verification_uri_complete_template="https://relay/auth/device?user_code={user_code}",
+        ttl=timedelta(minutes=10),
+        pair=True,
+    )
+    assert record.pair is True
+    fetched = await storage.get_by_device_code(device_code)
+    assert fetched is not None
+    assert fetched.pair is True
+
+
+@pytest.mark.anyio
+async def test_pair_flag_defaults_false():
+    """Existing callers that don't ask for a pair must keep their single-token
+    behaviour; ``pair`` must default to False."""
+    storage = InMemoryDeviceCodeStorage()
+    record, _ = await storage.create(
+        verification_uri="https://relay/auth/device",
+        verification_uri_complete_template="https://relay/auth/device?user_code={user_code}",
+        ttl=timedelta(minutes=10),
+    )
+    assert record.pair is False

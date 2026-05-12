@@ -196,6 +196,7 @@ async def swagger_token_exchange(
     code_verifier: str | None = Form(None),
     client_id: str | None = Form(None),
     client_secret: str | None = Form(None),  # noqa: ARG001 — accepted but ignored
+    pair: bool = Form(False),
 ) -> JSONResponse:
     """Exchange an OIDC authorization code for a *relay-issued* JWT.
 
@@ -268,11 +269,20 @@ async def swagger_token_exchange(
         ttl=timedelta(days=settings.refresh_token_ttl_days),
         client_hint="swagger-ui",
     )
-    return JSONResponse(
-        {
-            "access_token": access_token,
-            "token_type": "bearer",
-            "expires_in": get_token_expiration_seconds(),
-            "refresh_token": refresh_wire,
-        }
-    )
+    body: dict[str, object] = {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": get_token_expiration_seconds(),
+        "refresh_token": refresh_wire,
+    }
+    if pair:
+        # Same rationale as on the device-flow endpoint: issue a second
+        # independent refresh token so the caller can hand it to a
+        # delegate (e.g. Galaxy) without sharing the rotation chain.
+        _, secondary_wire = await refresh_storage.create(
+            user_id=user.user_id,
+            ttl=timedelta(days=settings.refresh_token_ttl_days),
+            client_hint="swagger-ui-secondary",
+        )
+        body["refresh_token_secondary"] = secondary_wire
+    return JSONResponse(body)
