@@ -41,6 +41,19 @@ def split_wire_token(wire: str) -> tuple[str, str]:
     return jti, secret
 
 
+def secret_matches_record(secret: str, record: RefreshToken) -> bool:
+    """Constant-time check that ``secret`` corresponds to ``record``'s stored hash.
+
+    Public helper used by ``/auth/token/revoke``: that endpoint cannot
+    use :func:`verify_and_consume` (which has side effects — chain
+    revocation on rotated-replay), but still needs to prove the caller
+    holds the wire-side secret rather than just a leaked ``jti``.
+    Closes the security review's ``/auth/token/revoke`` unauthenticated
+    finding.
+    """
+    return secrets_mod.compare_digest(_hash_secret(secret), record.secret_hash)
+
+
 class RefreshTokenStorage(ABC):
     """Abstract base class for refresh-token storage."""
 
@@ -278,12 +291,18 @@ class ValkeyRefreshTokenStorage(RefreshTokenStorage):
 
     async def _store(self, record: RefreshToken) -> None:
         token_key = self._token_key(record.jti)
-        await self._client.hset(token_key, self._serialize(record))
         # Set TTL slightly past expiry so rows don't linger for replay-detection
         # forever, but stay long enough that an attacker presenting the rotated
         # secret right after expiry still trips the chain-revocation guard.
         ttl_seconds = max(int((record.expires_at - _utcnow()).total_seconds()) + 3600, 3600)
-        await self._client.expire(token_key, ttl_seconds)
+        # MULTI/EXEC so a crash between HSET and EXPIRE can't leak a
+        # non-expiring refresh-token record.
+        from glide import Batch
+
+        batch = Batch(is_atomic=True)
+        batch.hset(token_key, self._serialize(record))
+        batch.expire(token_key, ttl_seconds)
+        await self._client.exec(batch, raise_on_error=True)
 
     async def create(
         self,
@@ -305,7 +324,21 @@ class ValkeyRefreshTokenStorage(RefreshTokenStorage):
             client_hint=client_hint,
         )
         await self._store(record)
-        await self._client.sadd(self._user_key(user_id), [jti])
+        # Track the jti in the per-user set so chain-revocation can
+        # walk all of a user's tokens. The set itself needs a TTL —
+        # without one it accumulates stale jti references forever
+        # (Storage M#9: "Missing TTL on auxiliary keys"). Renew it
+        # on every SADD to the maximum of (this token's TTL + grace,
+        # any still-live siblings) — approximating "set expires when
+        # the user's longest-living refresh token does".
+        from glide import Batch
+
+        user_set_key = self._user_key(user_id)
+        user_set_ttl = max(int(ttl.total_seconds()) + 3600, 3600)
+        batch = Batch(is_atomic=True)
+        batch.sadd(user_set_key, [jti])
+        batch.expire(user_set_key, user_set_ttl)
+        await self._client.exec(batch, raise_on_error=True)
         return record, f"{jti}.{secret}"
 
     async def get_by_jti(self, jti: str) -> RefreshToken | None:
@@ -467,6 +500,7 @@ __all__ = [
     "InMemoryRefreshTokenStorage",
     "ValkeyRefreshTokenStorage",
     "RefreshTokenError",
+    "secret_matches_record",
     "split_wire_token",
     "verify_and_consume",
 ]

@@ -31,7 +31,7 @@ from pulsar_relay.auth.device_flow import (
     InMemoryDeviceCodeStorage,
     ValkeyDeviceCodeStorage,
 )
-from pulsar_relay.auth.jwt import hash_password
+from pulsar_relay.auth.jwt import hash_password, verify_password
 from pulsar_relay.auth.models import UserCreate
 from pulsar_relay.auth.oidc_client import OIDCClient
 from pulsar_relay.auth.oidc_state import (
@@ -224,10 +224,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 log.info(f"✅ Bootstrap admin created: {admin_user.username}")
             else:
                 log.info(f"Bootstrap admin already exists: {settings.bootstrap_admin_username}")
-                hashed_password = hash_password(settings.bootstrap_admin_password)
-                if hashed_password != existing_admin.hashed_password:
-                    existing_admin.hashed_password = hashed_password
+                # The previous code compared ``hash_password(plaintext)``
+                # against the stored hash for equality — but the
+                # argon2 hash includes a fresh salt every call, so the
+                # comparison was effectively always-False and the
+                # bootstrap password would be re-hashed and re-stored
+                # on every startup (API M#15). Use ``verify_password``
+                # which compares plaintext to a stored argon2 hash
+                # correctly, and only update when the env-supplied
+                # password no longer matches what's stored.
+                if existing_admin.hashed_password is None or not verify_password(
+                    settings.bootstrap_admin_password, existing_admin.hashed_password
+                ):
+                    existing_admin.hashed_password = hash_password(settings.bootstrap_admin_password)
                     await user_storage.update_user(existing_admin)
+                    log.info("Bootstrap admin password updated from env")
         except Exception as e:
             log.error(f"Failed to create bootstrap admin: {e}")
 

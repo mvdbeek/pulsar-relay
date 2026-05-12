@@ -26,7 +26,7 @@ class TestUserCanAccess:
 
     @pytest.mark.anyio
     async def test_admin_bypasses_all_checks(self, storage):
-        await storage.create_topic(OWNER_ID, TopicCreate(topic_name="t", is_public=False))
+        await storage.create_topic(OWNER_ID, TopicCreate(topic_name="t"))
         assert await storage.user_can_access(
             owner_id=OWNER_ID, topic_name="t", user_id=ADMIN_ID, permission_type="read", user_permissions=["admin"]
         )
@@ -36,7 +36,7 @@ class TestUserCanAccess:
 
     @pytest.mark.anyio
     async def test_owner_can_read_and_write(self, storage):
-        await storage.create_topic(OWNER_ID, TopicCreate(topic_name="t", is_public=False))
+        await storage.create_topic(OWNER_ID, TopicCreate(topic_name="t"))
         assert await storage.user_can_access(
             owner_id=OWNER_ID,
             topic_name="t",
@@ -54,7 +54,7 @@ class TestUserCanAccess:
 
     @pytest.mark.anyio
     async def test_other_user_denied_on_private_topic(self, storage):
-        await storage.create_topic(OWNER_ID, TopicCreate(topic_name="t", is_public=False))
+        await storage.create_topic(OWNER_ID, TopicCreate(topic_name="t"))
         assert not await storage.user_can_access(
             owner_id=OWNER_ID,
             topic_name="t",
@@ -71,54 +71,19 @@ class TestUserCanAccess:
         )
 
     @pytest.mark.anyio
-    async def test_granted_user_can_read_but_not_write(self, storage):
-        await storage.create_topic(OWNER_ID, TopicCreate(topic_name="t", is_public=False))
-        await storage.grant_access(OWNER_ID, "t", GRANTED_ID)
-        assert await storage.user_can_access(
-            owner_id=OWNER_ID,
-            topic_name="t",
-            user_id=GRANTED_ID,
-            permission_type="read",
-            user_permissions=["read", "write"],
-        )
-        # Grants are read-only; writes remain owner-only.
-        assert not await storage.user_can_access(
-            owner_id=OWNER_ID,
-            topic_name="t",
-            user_id=GRANTED_ID,
-            permission_type="write",
-            user_permissions=["read", "write"],
-        )
-
-    @pytest.mark.anyio
-    async def test_public_topic_allows_read_for_anyone(self, storage):
-        await storage.create_topic(OWNER_ID, TopicCreate(topic_name="t", is_public=True))
-        assert await storage.user_can_access(
-            owner_id=OWNER_ID, topic_name="t", user_id=OTHER_ID, permission_type="read", user_permissions=["read"]
-        )
-
-    @pytest.mark.anyio
-    async def test_public_topic_denies_write_for_non_owner(self, storage):
-        await storage.create_topic(OWNER_ID, TopicCreate(topic_name="t", is_public=True))
-        assert not await storage.user_can_access(
-            owner_id=OWNER_ID,
-            topic_name="t",
-            user_id=OTHER_ID,
-            permission_type="write",
-            user_permissions=["read", "write"],
-        )
-
-    @pytest.mark.anyio
-    async def test_revoked_user_loses_access(self, storage):
-        await storage.create_topic(OWNER_ID, TopicCreate(topic_name="t", is_public=False))
-        await storage.grant_access(OWNER_ID, "t", GRANTED_ID)
-        assert await storage.user_can_access(
-            owner_id=OWNER_ID, topic_name="t", user_id=GRANTED_ID, permission_type="read", user_permissions=["read"]
-        )
-        await storage.revoke_access(OWNER_ID, "t", GRANTED_ID)
-        assert not await storage.user_can_access(
-            owner_id=OWNER_ID, topic_name="t", user_id=GRANTED_ID, permission_type="read", user_permissions=["read"]
-        )
+    async def test_non_owner_always_denied(self, storage):
+        """Phase 4 dropped the shared-access feature. Non-owners are
+        always denied regardless of permission type; admin override
+        still works (covered by ``test_admin_bypasses_all_checks``)."""
+        await storage.create_topic(OWNER_ID, TopicCreate(topic_name="t"))
+        for perm in ("read", "write"):
+            assert not await storage.user_can_access(
+                owner_id=OWNER_ID,
+                topic_name="t",
+                user_id=OTHER_ID,
+                permission_type=perm,
+                user_permissions=["read", "write"],
+            )
 
     @pytest.mark.anyio
     async def test_nonexistent_topic_allows_access(self, storage):
@@ -137,32 +102,20 @@ class TestUserCanAccess:
 
 
 class TestListUserTopicsFiltering:
-    """Verify list_user_topics filters by ownership and explicit grants."""
+    """Verify list_user_topics returns only the bearer's owned topics.
+
+    After Phase 4 dropped cross-user shared access, list_user_topics
+    is equivalent to list_owned_topics — kept as a method on the
+    interface for back-compat with callers that haven't migrated.
+    """
 
     @pytest.mark.anyio
-    async def test_excludes_other_users_private_topic(self, storage):
-        await storage.create_topic(OWNER_ID, TopicCreate(topic_name="theirs", is_public=False))
-        await storage.create_topic(OTHER_ID, TopicCreate(topic_name="mine", is_public=False))
+    async def test_excludes_other_users_topic(self, storage):
+        await storage.create_topic(OWNER_ID, TopicCreate(topic_name="theirs"))
+        await storage.create_topic(OTHER_ID, TopicCreate(topic_name="mine"))
         topics = await storage.list_user_topics(OTHER_ID)
         names = {t.topic_name for t in topics}
         assert names == {"mine"}
-
-    @pytest.mark.anyio
-    async def test_excludes_other_users_public_topic(self, storage):
-        """Public topics owned by others are NOT included in list_user_topics."""
-        await storage.create_topic(OWNER_ID, TopicCreate(topic_name="public-other", is_public=True))
-        await storage.create_topic(OTHER_ID, TopicCreate(topic_name="mine", is_public=False))
-        topics = await storage.list_user_topics(OTHER_ID)
-        names = {t.topic_name for t in topics}
-        assert names == {"mine"}
-
-    @pytest.mark.anyio
-    async def test_includes_explicitly_granted_topics(self, storage):
-        await storage.create_topic(OWNER_ID, TopicCreate(topic_name="shared", is_public=False))
-        await storage.grant_access(OWNER_ID, "shared", OTHER_ID)
-        topics = await storage.list_user_topics(OTHER_ID)
-        names = {t.topic_name for t in topics}
-        assert names == {"shared"}
 
 
 class TestNamespacingClosesSquat:

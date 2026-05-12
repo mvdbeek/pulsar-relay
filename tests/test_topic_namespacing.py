@@ -124,8 +124,8 @@ async def test_scan_for_legacy_keys_returns_examples() -> None:
             [
                 b"topic:legacy-jobs",  # flat — flagged
                 b"topic:alice/new-jobs",  # namespaced — fine
-                b"topic:legacy-other:allowed_users",  # flat with allowed_users suffix — flagged
-                b"topic:alice/jobs:allowed_users",  # namespaced + suffix — fine
+                b"topic:legacy-other:allowed_users",  # flat + dead-feature suffix — flagged
+                b"topic:alice/jobs:allowed_users",  # dead-feature suffix — flagged (Phase 4)
                 b"stream:topic:legacy-stream",  # flat — flagged
                 b"stream:topic:bob/new-stream",  # namespaced — fine
             ]
@@ -137,5 +137,7 @@ async def test_scan_for_legacy_keys_returns_examples() -> None:
     assert "topic:legacy-other:allowed_users" in flagged
     assert "stream:topic:legacy-stream" in flagged
     assert "topic:alice/new-jobs" not in flagged
-    assert "topic:alice/jobs:allowed_users" not in flagged
+    # Phase 4 removed the cross-user-sharing feature, so any key
+    # bearing the ``:allowed_users`` suffix is now also legacy.
+    assert "topic:alice/jobs:allowed_users" in flagged
     assert "stream:topic:bob/new-stream" not in flagged

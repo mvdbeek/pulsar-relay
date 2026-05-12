@@ -325,8 +325,7 @@ def require_topic_access(topic: str, permission_type: Literal["read", "write"]):
 
         Owner is always the bearer (``current_user``) — topics are
         per-user-namespaced (API H#5). Cross-user access via shared
-        ``allowed_user_ids`` is not currently expressible in any wire
-        path that uses this dependency.
+        topics was removed in Phase 4 (no wire path could express it).
         """
         topic_storage = get_topic_storage()
 
@@ -397,7 +396,6 @@ async def get_or_create_topic(topic_name: str, current_user: User):
     try:
         topic_data = TopicCreate(
             topic_name=topic_name,
-            is_public=False,  # Default to private
             description=f"Auto-created topic by {current_user.username}",
         )
         topic = await topic_storage.create_topic(current_user.user_id, topic_data)

@@ -32,7 +32,12 @@ from pulsar_relay.auth.models import (
     UserPublic,
     UserUpdate,
 )
-from pulsar_relay.auth.refresh import RefreshTokenError, split_wire_token, verify_and_consume
+from pulsar_relay.auth.refresh import (
+    RefreshTokenError,
+    secret_matches_record,
+    split_wire_token,
+    verify_and_consume,
+)
 from pulsar_relay.config import settings
 from pulsar_relay.core.cache import user_cache
 
@@ -442,12 +447,28 @@ async def refresh_token(payload: RefreshRequest, request: Request) -> TokenRespo
 
 @router.post("/token/revoke", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_refresh_token(payload: RevokeRequest) -> None:
-    """Revoke a refresh token (and optionally its rotation chain)."""
+    """Revoke a refresh token (and optionally its rotation chain).
+
+    Requires possession of the wire-form refresh token — the caller
+    must present both ``jti`` AND ``secret`` (the standard ``jti.secret``
+    wire format). The secret is checked via constant-time compare
+    against the stored hash; a leaked ``jti`` alone is NOT enough to
+    revoke. Closes the unauthenticated-revoke finding from the security
+    review.
+    """
     storage = get_refresh_token_storage()
     try:
-        jti, _ = split_wire_token(payload.refresh_token)
+        jti, secret = split_wire_token(payload.refresh_token)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="malformed refresh token") from exc
+
+    record = await storage.get_by_jti(jti)
+    if record is None or not secret_matches_record(secret, record):
+        # Return 204 in both cases — don't distinguish "unknown jti"
+        # from "wrong secret" to avoid a jti-enumeration oracle.
+        logger.info("Refresh-token revoke failed (unknown jti or secret mismatch)")
+        return
+
     if payload.revoke_chain:
         await storage.revoke_chain(jti, "logout")
     else:

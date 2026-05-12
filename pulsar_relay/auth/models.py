@@ -133,13 +133,20 @@ class TokenPayload(BaseModel):
 
 
 class Topic(BaseModel):
-    """Topic model."""
+    """Topic model.
+
+    The ``is_public`` and ``allowed_user_ids`` fields that this model
+    previously carried have been removed: per-user topic namespacing
+    (Phase 3c, API H#5) made the wire contract unable to address any
+    topic outside the bearer's own namespace, so neither flag had a
+    reachable code path. The cross-user-sharing feature would need a
+    new wire mechanism (e.g. ``?owner=...``) to be reintroduced
+    coherently.
+    """
 
     topic_id: str = Field(..., description="Unique topic identifier")
     topic_name: str = Field(..., description="Topic name")
     owner_id: str = Field(..., description="User ID of the topic owner")
-    is_public: bool = Field(default=False, description="Whether topic is publicly accessible for reading")
-    allowed_user_ids: list[str] = Field(default_factory=list, description="User IDs with access to this topic")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     description: Optional[str] = Field(None, description="Topic description")
 
@@ -148,14 +155,12 @@ class TopicCreate(BaseModel):
     """Topic creation request."""
 
     topic_name: TopicName = Field(..., description="Topic name")
-    is_public: bool = Field(default=False, description="Whether topic is publicly accessible for reading")
     description: Optional[str] = Field(None, max_length=500, description="Topic description")
 
 
 class TopicUpdate(BaseModel):
     """Topic update request."""
 
-    is_public: Optional[bool] = Field(None, description="Whether topic is publicly accessible for reading")
     description: Optional[str] = Field(None, max_length=500, description="Topic description")
 
 
@@ -165,27 +170,8 @@ class TopicPublic(BaseModel):
     topic_id: str
     topic_name: str
     owner_id: str
-    is_public: bool
     created_at: datetime
     description: Optional[str]
-    # Only shown to owner
-    allowed_user_ids: Optional[list[str]] = None
-
-
-class TopicPermissionGrant(BaseModel):
-    """Grant access to a topic."""
-
-    user_id: Optional[str] = Field(None, description="User ID to grant access to")
-    username: Optional[str] = Field(None, description="Username to grant access to (alternative to user_id)")
-
-
-class TopicPermission(BaseModel):
-    """Topic permission record."""
-
-    topic_name: str
-    user_id: str
-    username: str
-    granted_at: datetime
 
 
 # --- Refresh tokens, device flow, OIDC state ---

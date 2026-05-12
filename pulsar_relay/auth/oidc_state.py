@@ -130,8 +130,15 @@ class ValkeyOIDCStateStorage(OIDCStateStorage):
             issued_at=now,
             expires_at=now + ttl,
         )
-        await self._client.set(self._key(record.state), record.model_dump_json())
-        await self._client.expire(self._key(record.state), max(int(ttl.total_seconds()), 60))
+        # Atomic ``SET ... EX <ttl>`` so a process crash between the
+        # write and the expire can't leak a non-expiring state record.
+        from glide import ExpirySet, ExpiryType
+
+        await self._client.set(
+            self._key(record.state),
+            record.model_dump_json(),
+            expiry=ExpirySet(ExpiryType.SEC, max(int(ttl.total_seconds()), 60)),
+        )
         return record
 
     async def consume(self, state: str) -> OIDCStateRecord | None:
