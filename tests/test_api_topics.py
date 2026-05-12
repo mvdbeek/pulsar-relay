@@ -493,7 +493,9 @@ class TestTopicAccessControl:
             json={"messages": [{"topic": "bulk-owner-only", "payload": {"x": 1}}]},
         )
         assert response.status_code == 403
-        assert "bulk-owner-only" in response.json()["detail"]
+        # The error message intentionally does NOT echo denied topic
+        # names back (Medium #11 — enumeration oracle).
+        assert "bulk-owner-only" not in response.json()["detail"]
 
     async def test_publish_denied_for_granted_user(self, auth_storage, client):
         """Grants are read-only; granted users cannot publish."""

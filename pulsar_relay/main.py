@@ -9,6 +9,8 @@ from typing import Union
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -80,7 +82,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             host=settings.valkey_host,
             port=settings.valkey_port,
             max_messages_per_topic=settings.max_messages_per_topic,
-            ttl_seconds=settings.persistent_tier_retention,
             use_tls=settings.valkey_use_tls,
             username=settings.valkey_username,
             password=settings.valkey_password,
@@ -213,12 +214,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     topics.set_storage(storage)
     websocket.set_manager(connection_manager)
 
+    # Periodic sweep of stale long-poll waiters. ``cleanup_stale_waiters``
+    # used to be defined but never invoked, so an abandoned waiter sat
+    # in memory forever (API H#8).
+    cleanup_task = asyncio.create_task(poll_manager.cleanup_loop())
+
     log.info("Application startup complete")
 
     yield  # Application is running
 
     # Shutdown: Cleanup resources
     log.info("Shutting down application...")
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
     if pubsub_coordinator:
         await pubsub_coordinator.stop()
     await storage.close()
@@ -237,6 +248,19 @@ app = FastAPI(
     description="High-performance message relay with WebSocket and long-polling support",
     lifespan=lifespan,
 )
+
+# Wire up the slowapi rate limiter. The module-level Limiter instance
+# lives in pulsar_relay.api.limits so route modules can import it
+# without import cycles; here we attach it to the FastAPI app and
+# register the 429 exception handler. We intentionally do NOT use
+# ``SlowAPIMiddleware`` — it expects a ``Response`` object to inject
+# rate-limit headers and breaks the request flow when used together
+# with the per-route ``@limiter.limit`` decorator (which is what we
+# rely on for enforcement).
+from pulsar_relay.api.limits import limiter  # noqa: E402 — must follow ``app`` creation
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
 
 class BodySizeLimitMiddleware:

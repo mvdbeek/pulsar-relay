@@ -17,7 +17,6 @@ async def valkey_storage():
         host="localhost",
         port=6379,
         max_messages_per_topic=10000,
-        ttl_seconds=3600,
     )
     # Mock the Glide client
     storage._client = AsyncMock()

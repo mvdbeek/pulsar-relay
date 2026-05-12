@@ -55,6 +55,21 @@ def anyio_backend():
     return "asyncio"
 
 
+@pytest.fixture(autouse=True)
+def reset_rate_limiter():
+    """Wipe the shared slowapi Limiter state before each test.
+
+    Rate limits are scoped per-IP and the test client always presents
+    ``testclient`` / ``127.0.0.1`` — without a reset, the 5/min auth cap
+    leaks across tests in the same module and tests start seeing 429.
+    """
+    from pulsar_relay.api.limits import limiter
+
+    limiter.reset()
+    yield
+    limiter.reset()
+
+
 async def create_default_users(storage: UserStorage) -> None:
     """Create default users for testing/development.
 

@@ -1,26 +1,44 @@
 """Pydantic models for request/response validation."""
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AfterValidator, BaseModel, Field
+
+
+def _validate_topic_charset(value: str) -> str:
+    """Reject topic names with characters that would collide with Valkey
+    key separators or be visually confusable.
+
+    Allowed: ``[A-Za-z0-9_-]``, 1..255 chars. Rejected: ``:``, ``/``,
+    whitespace, control chars, ``*``, etc. Centralising the check here
+    means a hostile topic name like ``"foo:allowed_users"`` cannot land
+    in storage key construction from any input path (REST, WS, poll).
+    """
+    if not value:
+        raise ValueError("Topic name must not be empty")
+    if len(value) > 255:
+        raise ValueError("Topic name must be at most 255 characters")
+    # Same charset previously enforced only on Message.topic; now applied
+    # everywhere via the TopicName alias.
+    if not value.replace("_", "").replace("-", "").isalnum():
+        raise ValueError("Topic must contain only alphanumeric characters, hyphens, and underscores")
+    return value
+
+
+TopicName = Annotated[str, AfterValidator(_validate_topic_charset)]
+"""Validated topic name. Use in every model/path that accepts a topic
+name so the charset and length constraints are enforced uniformly.
+Closes API M#10 (charset only enforced on POST /messages previously)."""
 
 
 class Message(BaseModel):
     """Message model for incoming messages from producers."""
 
-    topic: str = Field(..., min_length=1, max_length=255, description="Topic name")
+    topic: TopicName = Field(..., description="Topic name")
     payload: dict[str, Any] = Field(..., description="Message payload as JSON")
     ttl: Optional[int] = Field(None, gt=0, description="Time-to-live in seconds")
     metadata: Optional[dict[str, str]] = Field(None, description="Optional metadata")
-
-    @field_validator("topic")
-    @classmethod
-    def validate_topic(cls, v: str) -> str:
-        """Validate topic name format."""
-        if not v.replace("_", "").replace("-", "").isalnum():
-            raise ValueError("Topic must contain only alphanumeric characters, hyphens, and underscores")
-        return v
 
     model_config = {
         "json_schema_extra": {
@@ -82,7 +100,7 @@ class WebSocketSubscribe(BaseModel):
     """WebSocket subscription message."""
 
     type: str = Field("subscribe", pattern="^subscribe$")
-    topics: list[str] = Field(..., min_length=1, max_length=50)
+    topics: list[TopicName] = Field(..., min_length=1, max_length=50)
     client_id: str = Field(..., min_length=1, max_length=255)
     offset: str = Field("last", description="'last', 'earliest', or specific message_id")
 
@@ -91,7 +109,7 @@ class WebSocketUnsubscribe(BaseModel):
     """WebSocket unsubscribe message."""
 
     type: str = Field("unsubscribe", pattern="^unsubscribe$")
-    topics: list[str] = Field(..., min_length=1)
+    topics: list[TopicName] = Field(..., min_length=1)
 
 
 class WebSocketAck(BaseModel):

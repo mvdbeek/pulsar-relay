@@ -4,8 +4,9 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from pulsar_relay.api.limits import limiter
 from pulsar_relay.auth.dependencies import get_or_create_topic, require_permission
 from pulsar_relay.auth.models import User
 from pulsar_relay.core.connections import ConnectionManager
@@ -74,7 +75,9 @@ def get_manager() -> Optional[ConnectionManager]:
 
 
 @router.post("/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("120/minute")
 async def create_message(
+    request: Request,
     message: Message,
     current_user: User = Depends(require_permission("write")),
 ) -> MessageResponse:
@@ -139,14 +142,17 @@ async def create_message(
 
 
 @router.post("/messages/bulk", response_model=BulkMessageResponse, status_code=status.HTTP_207_MULTI_STATUS)
+@limiter.limit("30/minute")
 async def create_bulk_messages(
-    request: BulkMessageRequest,
+    request: Request,
+    payload: BulkMessageRequest,
     current_user: User = Depends(require_permission("write")),
 ) -> BulkMessageResponse:
     """Create multiple messages in bulk.
 
     Args:
-        request: Bulk message request
+        request: ASGI request (consumed by the rate limiter)
+        payload: Bulk message request body
         current_user: Current authenticated user
 
     Returns:
@@ -155,7 +161,7 @@ async def create_bulk_messages(
     storage = get_storage()
 
     # Validate access to ALL unique topics upfront - fail early if any are denied
-    unique_topics = {msg.topic for msg in request.messages}
+    unique_topics = {msg.topic for msg in payload.messages}
     denied_topics = set()
 
     for topic in unique_topics:
@@ -165,11 +171,12 @@ async def create_bulk_messages(
             # Track topics that user doesn't have access to
             denied_topics.add(topic)
 
-    # Fail fast if any topics are denied
+    # Fail fast if any topics are denied. Don't echo the topic names back
+    # (Medium #11 enumeration oracle).
     if denied_topics:
         raise HTTPException(
             status_code=403,
-            detail=f"Access denied to topics: {sorted(denied_topics)}",
+            detail="Access denied to one or more requested topics",
         )
 
     # All topics validated - proceed with message creation
@@ -177,7 +184,7 @@ async def create_bulk_messages(
     accepted = 0
     rejected = 0
 
-    for message in request.messages:
+    for message in payload.messages:
         try:
             timestamp = datetime.now(timezone.utc)
 
@@ -223,5 +230,5 @@ async def create_bulk_messages(
 
     return BulkMessageResponse(
         results=results,
-        summary={"total": len(request.messages), "accepted": accepted, "rejected": rejected},
+        summary={"total": len(payload.messages), "accepted": accepted, "rejected": rejected},
     )

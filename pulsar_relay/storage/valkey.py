@@ -33,7 +33,6 @@ class ValkeyStorage(StorageBackend):
         host: str = "localhost",
         port: int = 6379,
         max_messages_per_topic: int = 1000000,
-        ttl_seconds: int = 3600,
         use_tls: bool = False,
         username: Optional[str] = None,
         password: Optional[str] = None,
@@ -44,17 +43,23 @@ class ValkeyStorage(StorageBackend):
             host: Valkey host
             port: Valkey port
             max_messages_per_topic: Maximum messages per topic before trimming
-            ttl_seconds: Time-to-live for messages in seconds
             use_tls: Whether to use TLS for connection
             username: Valkey ACL username (None falls back to legacy
                 requirepass authentication when ``password`` is supplied).
             password: Valkey password / ACL password. None disables AUTH —
                 only acceptable in test/dev configurations.
+
+        Note:
+            The previous ``ttl_seconds`` parameter was accepted but
+            never enforced (the stream keys never received an
+            ``EXPIRE``). It has been removed to avoid implying a
+            retention guarantee that did not exist. Retention is
+            bounded only by ``max_messages_per_topic`` via stream
+            trim. Closes Storage H#6.
         """
         self.host = host
         self.port = port
         self.max_messages_per_topic = max_messages_per_topic
-        self.ttl_seconds = ttl_seconds
         self.use_tls = use_tls
         self.username = username
         self.password = password

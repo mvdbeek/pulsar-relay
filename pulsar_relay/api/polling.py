@@ -8,7 +8,8 @@ from pydantic import BaseModel, Field
 
 from pulsar_relay.auth.dependencies import get_current_user, get_topic_storage, require_permission
 from pulsar_relay.auth.models import User
-from pulsar_relay.core.polling import PollManager
+from pulsar_relay.core.polling import PollManager, PollWaiterLimitExceededError
+from pulsar_relay.models import TopicName
 from pulsar_relay.storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,10 @@ router = APIRouter()
 class PollRequest(BaseModel):
     """Request model for long polling."""
 
-    topics: list[str] = Field(..., description="Topics to subscribe to", min_length=1)
+    # ``max_length=20`` caps the number of topics one waiter can fan out
+    # over — defends against a single caller exhausting the poll-manager
+    # subscription map (API H#8).
+    topics: list[TopicName] = Field(..., description="Topics to subscribe to", min_length=1, max_length=20)
     since: Optional[dict[str, str]] = Field(
         default=None,
         description="Last message ID seen per topic for catching up on missed messages",
@@ -85,11 +89,13 @@ async def long_poll(
         if not can_access:
             denied_topics.append(topic)
 
-    # Fail fast if any topics are denied
+    # Fail fast if any topics are denied. The error message intentionally
+    # does NOT echo the denied topic names back (Medium #11: avoiding a
+    # topic-existence enumeration oracle).
     if denied_topics:
         raise HTTPException(
             status_code=403,
-            detail=f"Access denied to topics: {denied_topics}",
+            detail="Access denied to one or more requested topics",
         )
 
     messages = []
@@ -120,7 +126,14 @@ async def long_poll(
             return PollResponse(messages=messages, has_more=len(messages) >= 100)
 
     # No cached messages, create waiter for new messages
-    waiter = await poll_manager.create_waiter(poll_request.topics)
+    try:
+        waiter = await poll_manager.create_waiter(poll_request.topics, user_id=current_user.user_id)
+    except PollWaiterLimitExceededError as exc:
+        logger.warning("Poll waiter limit exceeded for user %s: %s", current_user.user_id, exc)
+        raise HTTPException(
+            status_code=429,
+            detail="Too many concurrent poll connections",
+        ) from exc
 
     try:
         # Wait for new messages with timeout

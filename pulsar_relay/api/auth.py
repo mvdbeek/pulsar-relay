@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 
+from pulsar_relay.api.limits import limiter
 from pulsar_relay.auth.denylist import seconds_until_exp
 from pulsar_relay.auth.dependencies import (
     get_current_user,
@@ -41,7 +42,9 @@ router = APIRouter()
 
 
 @router.post("/login", response_model=TokenResponse)
+@limiter.limit("5/minute")
 async def login(
+    request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
 ) -> TokenResponse:
     """Authenticate user and return JWT token (OAuth2 compatible).
@@ -384,6 +387,7 @@ class SessionInfo(BaseModel):
 
 
 @router.post("/token/refresh", response_model=TokenResponse)
+@limiter.limit("10/minute")
 async def refresh_token(payload: RefreshRequest, request: Request) -> TokenResponse:
     """Rotate a refresh token. Replaying a rotated token revokes the chain."""
     storage = get_refresh_token_storage()

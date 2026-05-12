@@ -5,6 +5,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from pulsar_relay.models import TopicName
+
 
 def _utcnow() -> datetime:
     """Timezone-aware UTC now (datetime.utcnow is deprecated)."""
@@ -145,7 +147,7 @@ class Topic(BaseModel):
 class TopicCreate(BaseModel):
     """Topic creation request."""
 
-    topic_name: str = Field(..., min_length=1, max_length=255, description="Topic name")
+    topic_name: TopicName = Field(..., description="Topic name")
     is_public: bool = Field(default=False, description="Whether topic is publicly accessible for reading")
     description: Optional[str] = Field(None, max_length=500, description="Topic description")
 
