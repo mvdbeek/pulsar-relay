@@ -59,6 +59,7 @@ class DeviceCodeStorage(ABC):
         ttl: timedelta,
         interval: int = 5,
         client_hint: str | None = None,
+        pair: bool = False,
     ) -> tuple[DeviceCode, str]:
         """Issue a new device-code session.
 
@@ -117,6 +118,7 @@ class InMemoryDeviceCodeStorage(DeviceCodeStorage):
         ttl: timedelta,
         interval: int,
         client_hint: str | None,
+        pair: bool = False,
     ) -> tuple[DeviceCode, str]:
         # Avoid user_code collisions with active sessions.
         for _ in range(10):
@@ -137,6 +139,7 @@ class InMemoryDeviceCodeStorage(DeviceCodeStorage):
             expires_at=now + ttl,
             interval=interval,
             client_hint=client_hint,
+            pair=pair,
         )
         return record, device_code
 
@@ -148,6 +151,7 @@ class InMemoryDeviceCodeStorage(DeviceCodeStorage):
         ttl: timedelta,
         interval: int = 5,
         client_hint: str | None = None,
+        pair: bool = False,
     ) -> tuple[DeviceCode, str]:
         record, device_code = self._build(
             verification_uri=verification_uri,
@@ -155,6 +159,7 @@ class InMemoryDeviceCodeStorage(DeviceCodeStorage):
             ttl=ttl,
             interval=interval,
             client_hint=client_hint,
+            pair=pair,
         )
         self._records[record.device_code_hash] = record
         self._user_code_index[record.user_code] = record.device_code_hash
@@ -238,6 +243,7 @@ class ValkeyDeviceCodeStorage(DeviceCodeStorage):
             "status": record.status,
             "user_id": record.user_id or "",
             "client_hint": record.client_hint or "",
+            "pair": "1" if record.pair else "0",
         }
 
     @staticmethod
@@ -256,6 +262,7 @@ class ValkeyDeviceCodeStorage(DeviceCodeStorage):
             status=d.get("status", "pending"),  # type: ignore[arg-type]
             user_id=d.get("user_id") or None,
             client_hint=d.get("client_hint") or None,
+            pair=d.get("pair", "0") == "1",
         )
 
     async def _store(self, record: DeviceCode) -> None:
@@ -272,6 +279,7 @@ class ValkeyDeviceCodeStorage(DeviceCodeStorage):
         ttl: timedelta,
         interval: int = 5,
         client_hint: str | None = None,
+        pair: bool = False,
     ) -> tuple[DeviceCode, str]:
         # Hand off the heavy lifting; reuse the in-memory builder for the
         # collision-avoidance loop (it only checks local state, which is fine
@@ -307,6 +315,7 @@ class ValkeyDeviceCodeStorage(DeviceCodeStorage):
             expires_at=now + ttl,
             interval=interval,
             client_hint=client_hint,
+            pair=pair,
         )
         await self._store(record)
         return record, device_code

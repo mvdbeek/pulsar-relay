@@ -51,8 +51,16 @@ async def request_device_code(
     request: Request,
     client_hint: str | None = Form(None),
     scope: str | None = Form(None),  # noqa: ARG001 — accepted but ignored in v1
+    pair: bool = Form(False),
 ) -> JSONResponse:
-    """RFC 8628 §3.1: issue a ``device_code`` + ``user_code`` pair."""
+    """RFC 8628 §3.1: issue a ``device_code`` + ``user_code`` pair.
+
+    ``pair=true`` is a relay extension: when set, the subsequent token
+    poll returns *two* independent refresh tokens for the same user
+    (``refresh_token`` + ``refresh_token_secondary``). Used by Galaxy BYOC
+    bootstrap so the user's host and Galaxy each get a rotation-independent
+    token — neither can lock the other out via single-use rotation.
+    """
     if not settings.oidc.enabled or not settings.oidc.providers:
         # Without OIDC there's no way for an operator to approve a device
         # session — short-circuit with a clear error.
@@ -72,6 +80,7 @@ async def request_device_code(
         ttl=timedelta(seconds=settings.device_code_ttl_seconds),
         interval=settings.device_code_poll_interval,
         client_hint=client_hint or request.headers.get("user-agent"),
+        pair=pair,
     )
 
     return JSONResponse(
@@ -141,14 +150,23 @@ async def poll_device_token(
             ttl=timedelta(days=settings.refresh_token_ttl_days),
             client_hint=record.client_hint,
         )
-        return JSONResponse(
-            {
-                "access_token": access_token,
-                "token_type": "bearer",
-                "expires_in": get_token_expiration_seconds(),
-                "refresh_token": refresh_wire,
-            }
-        )
+        body: dict[str, object] = {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "expires_in": get_token_expiration_seconds(),
+            "refresh_token": refresh_wire,
+        }
+        if record.pair:
+            # Issue a second, independent refresh token for the same user
+            # (no ``parent_jti`` linkage). Each chain rotates separately so
+            # the daemon and its delegate (typically Galaxy) don't collide.
+            _, secondary_wire = await refresh_storage.create(
+                user_id=user.user_id,
+                ttl=timedelta(days=settings.refresh_token_ttl_days),
+                client_hint=(record.client_hint or "") + "-secondary" if record.client_hint else "secondary",
+            )
+            body["refresh_token_secondary"] = secondary_wire
+        return JSONResponse(body)
 
     return _rfc8628_error("expired_token", description="Unexpected device-code status")
 

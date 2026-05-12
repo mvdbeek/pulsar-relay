@@ -90,8 +90,10 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     """JWT token response (OAuth2 compliant).
 
-    Following OAuth2 spec, only includes standard fields.
-    To get user info, clients should call /auth/me with the token.
+    Following OAuth2 spec, only includes standard fields plus a relay-specific
+    ``refresh_token_secondary`` for the pair-issuance extension used by
+    Galaxy BYOC bootstrap. To get user info, clients should call /auth/me
+    with the token.
     """
 
     access_token: str = Field(..., description="JWT access token")
@@ -100,6 +102,14 @@ class TokenResponse(BaseModel):
     refresh_token: Optional[str] = Field(
         None,
         description="Long-lived refresh token (rotates on use). Optional for backwards compatibility.",
+    )
+    refresh_token_secondary: Optional[str] = Field(
+        None,
+        description=(
+            "Second independent refresh token issued when the caller requested "
+            "``pair=true`` at device-flow or swagger-token exchange. Rotates on "
+            "its own chain — neither sibling's rotation invalidates the other."
+        ),
     )
 
 
@@ -216,6 +226,15 @@ class DeviceCode(BaseModel):
     status: DeviceCodeStatus = "pending"
     user_id: Optional[str] = Field(None, description="Set once an OIDC sign-in approves the code")
     client_hint: Optional[str] = Field(None, description="Free-form descriptor of the requesting client")
+    pair: bool = Field(
+        default=False,
+        description=(
+            "If True, the daemon requested a pair of independent refresh tokens at "
+            "issuance time. Used by Galaxy BYOC bootstrap: the daemon keeps one, "
+            "hands the other to Galaxy. Each rotates on its own chain so neither "
+            "client locks the other out."
+        ),
+    )
 
 
 class OIDCStateRecord(BaseModel):

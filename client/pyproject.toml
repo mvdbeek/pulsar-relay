@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pulsar-relay-client"
+version = "1.0.0"
+description = "Client library for the pulsar-relay HTTP wire contract (auth, transport, device flow, topic management)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    {name = "Marius van den Beek", email = "marius@galaxyproject.org"}
+]
+maintainers = [
+    {name = "Marius van den Beek", email = "marius@galaxyproject.org"}
+]
+keywords = [
+    "pulsar-relay",
+    "client",
+    "auth",
+    "device-flow",
+    "long-polling",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet :: WWW/HTTP",
+]
+
+dependencies = [
+    "requests>=2.28",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.4",
+    "responses>=0.25.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/mvdbeek/pulsar-relay"
+Repository = "https://github.com/mvdbeek/pulsar-relay"
+Issues = "https://github.com/mvdbeek/pulsar-relay/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pulsar_relay_client*"]
+
+[tool.setuptools.package-data]
+pulsar_relay_client = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -141,14 +141,37 @@ class InMemoryRefreshTokenStorage(RefreshTokenStorage):
         seed = self._tokens.get(jti)
         if seed is None:
             return 0
-        # All tokens for the same user form a connected family via parent_jti
-        # links. Cheaper to just walk the user's set than reconstruct the DAG.
+        # A "chain" is the connected component containing ``seed`` in the
+        # parent_jti DAG: walk up to the root, then BFS down from the root.
+        # Independent refresh tokens for the same user (e.g., the pair issued
+        # for Galaxy BYOC) have no parent_jti linkage so live in distinct
+        # components and revoking one mustn't take down the other.
+        root_jti = jti
+        while True:
+            token = self._tokens.get(root_jti)
+            if token is None or token.parent_jti is None:
+                break
+            root_jti = token.parent_jti
+        chain: set[str] = {root_jti}
+        frontier = [root_jti]
+        # Pre-bucket children by parent for an O(N) traversal.
+        children: dict[str, list[str]] = {}
+        for child_jti in self._user_index.get(seed.user_id, set()):
+            child = self._tokens.get(child_jti)
+            if child is not None and child.parent_jti:
+                children.setdefault(child.parent_jti, []).append(child_jti)
+        while frontier:
+            parent_jti = frontier.pop()
+            for descendant_jti in children.get(parent_jti, ()):
+                if descendant_jti not in chain:
+                    chain.add(descendant_jti)
+                    frontier.append(descendant_jti)
         revoked = 0
-        for sibling_jti in list(self._user_index.get(seed.user_id, set())):
-            sibling = self._tokens.get(sibling_jti)
-            if sibling is not None and not sibling.revoked:
-                sibling.revoked = True
-                sibling.revoked_reason = reason
+        for chain_jti in chain:
+            token = self._tokens.get(chain_jti)
+            if token is not None and not token.revoked:
+                token.revoked = True
+                token.revoked_reason = reason
                 revoked += 1
         return revoked
 
@@ -278,15 +301,44 @@ class ValkeyRefreshTokenStorage(RefreshTokenStorage):
         seed = await self.get_by_jti(jti)
         if seed is None:
             return 0
+        # See the in-memory backend for rationale: revoke the connected
+        # component of ``jti`` in the parent_jti DAG, not the user's entire
+        # token set. Independent (pair-issued) tokens live in their own
+        # components; we must not collateral-revoke them.
         sibling_jtis_bytes = await self._client.smembers(self._user_key(seed.user_id))
         sibling_jtis = [b.decode("utf-8") for b in sibling_jtis_bytes]
-        revoked = 0
+        tokens_by_jti: dict[str, RefreshToken] = {}
         for sibling_jti in sibling_jtis:
-            sibling = await self.get_by_jti(sibling_jti)
-            if sibling is not None and not sibling.revoked:
-                sibling.revoked = True
-                sibling.revoked_reason = reason
-                await self._store(sibling)
+            tok = await self.get_by_jti(sibling_jti)
+            if tok is not None:
+                tokens_by_jti[sibling_jti] = tok
+        # Walk up to the chain root.
+        root_jti = jti
+        while True:
+            current = tokens_by_jti.get(root_jti)
+            if current is None or current.parent_jti is None:
+                break
+            root_jti = current.parent_jti
+        # BFS down from the root.
+        children: dict[str, list[str]] = {}
+        for tok_jti, tok in tokens_by_jti.items():
+            if tok.parent_jti:
+                children.setdefault(tok.parent_jti, []).append(tok_jti)
+        chain: set[str] = {root_jti}
+        frontier = [root_jti]
+        while frontier:
+            parent_jti = frontier.pop()
+            for descendant_jti in children.get(parent_jti, ()):
+                if descendant_jti not in chain:
+                    chain.add(descendant_jti)
+                    frontier.append(descendant_jti)
+        revoked = 0
+        for chain_jti in chain:
+            tok = tokens_by_jti.get(chain_jti)
+            if tok is not None and not tok.revoked:
+                tok.revoked = True
+                tok.revoked_reason = reason
+                await self._store(tok)
                 revoked += 1
         return revoked
 
