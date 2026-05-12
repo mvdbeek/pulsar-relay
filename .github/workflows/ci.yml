@@ -102,6 +102,39 @@ jobs:
         # Run pytest env only
         run: tox -e pytest
 
+  client-tests:
+    name: pulsar-relay-client unit tests
+    needs: check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The client claims to support the full python range; verify it.
+        python-version: [ '3.10', '3.11', '3.12', '3.13', '3.14' ]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-client-${{ matrix.python-version }}-${{ hashFiles('client/pyproject.toml','tox.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-client-${{ matrix.python-version }}-
+            ${{ runner.os }}-pip-
+
+      - name: Install tox
+        run: pip install --upgrade pip && pip install tox
+
+      - name: Run client unit suite
+        run: tox -e client-tests
+
   e2e:
     name: OIDC end-to-end (Keycloak)
     needs: check

@@ -22,7 +22,13 @@ import time
 import httpx
 import pytest
 
-from .keycloak_login_helper import login_via_keycloak
+# The pulsar-relay-client sibling distribution is only installed in the
+# `e2e` and `mypy` tox envs. The default `pytest` env collects this file
+# (to evaluate markers) but doesn't run it — importorskip keeps that
+# collection from blowing up when the client isn't on the path.
+HttpRelayClient = pytest.importorskip("pulsar_relay_client").HttpRelayClient
+
+from .keycloak_login_helper import login_via_keycloak  # noqa: E402
 
 pytestmark = pytest.mark.e2e
 
@@ -175,17 +181,13 @@ def test_byoc_topic_pinning_against_real_relay(relay_against_keycloak):
         ), f"admin unexpectedly succeeded in claiming {topic_name}: {resp.status_code} {resp.text}"
 
 
-def test_byoc_pin_topics_helper_against_real_relay(relay_against_keycloak):
-    """Galaxy-side check: ``PulsarByocManager._pin_topics_for_manager``
-    succeeds against a real relay when the topics don't exist yet, and is
-    safely idempotent when re-run."""
+def test_create_or_verify_topic_against_real_relay(relay_against_keycloak):
+    """The ``HttpRelayClient.create_or_verify_topic`` primitive shipped by
+    ``pulsar-relay-client`` is idempotent against the live relay: first call
+    creates the topic, second call sees it already owned by the bearer and
+    succeeds."""
     relay = relay_against_keycloak["base_url"]
     setup = relay_against_keycloak["keycloak"]
-
-    # Import only on demand so the rest of the test file works without Galaxy
-    # on the path — the e2e suite is sometimes run standalone.
-    galaxy_manager = pytest.importorskip("galaxy.managers.pulsar_byoc")
-    PulsarByocManager = galaxy_manager.PulsarByocManager  # noqa: N806
 
     body = _drive_device_flow_with_pair(relay, setup)
     access_token = body["access_token"]
@@ -195,13 +197,9 @@ def test_byoc_pin_topics_helper_against_real_relay(relay_against_keycloak):
         timeout=5.0,
     ).json()["username"]
 
-    # Bare manager — we only call ``_pin_topics_for_manager`` which doesn't
-    # need DB/vault state.
-    manager = object.__new__(PulsarByocManager)
-    manager.app = None
-    manager.session = None
-
-    # First call creates topics.
-    manager._pin_topics_for_manager(access_token, relay, sub)
-    # Second call: topics now exist and are owned by us → must succeed.
-    manager._pin_topics_for_manager(access_token, relay, sub)
+    client = HttpRelayClient(relay)
+    topic = f"job_setup_{sub}"
+    # First call creates the topic.
+    client.create_or_verify_topic(access_token, topic)
+    # Second call: topic now exists and is owned by us → must succeed.
+    client.create_or_verify_topic(access_token, topic)
