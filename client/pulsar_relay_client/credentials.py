@@ -46,8 +46,40 @@ class CredentialsStore(Protocol):
     def save(self, data: dict[str, Any]) -> None: ...
 
 
+def _parent_dir_is_safe(directory: str) -> bool:
+    """Reject parent directories that are world- or group-writable.
+
+    On a shared host, a 0o775 parent dir lets an attacker swap the
+    credentials file out from under us between the mode check and the
+    read (TOCTOU). Refuse to load via such a directory rather than
+    silently returning the contents (Storage H#5 / Client H#5).
+    """
+    try:
+        st = os.lstat(directory)
+    except OSError:
+        # Caller will handle the resulting OSError; the load path
+        # already returns None when stat fails.
+        return True
+    return not bool(stat.S_IMODE(st.st_mode) & 0o022)
+
+
 class CredentialsFile:
-    """Wrapper around a JSON credentials file with mode-checking and atomic writes."""
+    """Wrapper around a JSON credentials file with mode-checking and
+    atomic writes.
+
+    The Phase 3d hardening adds three defences against the previous
+    TOCTOU risk (Storage H#5):
+
+    * ``O_NOFOLLOW`` on read — refuse to dereference a symlink at
+      the credentials path. An attacker who can write into the parent
+      dir could otherwise plant a symlink pointing at an arbitrary
+      file readable by the relay process.
+    * Parent-directory permission check — refuse to load when the
+      parent dir is group- or world-writable.
+    * ``fchmod`` on the temp file BEFORE writing the secret — the
+      previous code wrote first (with the process umask), then
+      ``chmod``ed on the final path.
+    """
 
     def __init__(self, path: str) -> None:
         self.path = os.path.abspath(path)
@@ -56,49 +88,88 @@ class CredentialsFile:
         return os.path.isfile(self.path)
 
     def load(self) -> Optional[dict[str, Any]]:
-        """Read the credentials file. Returns ``None`` if it does not exist.
-
-        Logs a warning if the file is more permissive than mode 0600.
-        """
+        """Read the credentials file. Returns ``None`` if absent."""
         if not self.exists():
             return None
-        try:
-            mode = stat.S_IMODE(os.stat(self.path).st_mode)
-        except OSError as exc:
-            log.warning("Failed to stat credentials file %s: %s", self.path, exc)
-            mode = None
-        if mode is not None and (mode & 0o077):
-            log.warning(
-                "Relay credentials file %s has mode 0%o; recommended is 0%o.",
+
+        directory = os.path.dirname(self.path) or "."
+        if not _parent_dir_is_safe(directory):
+            log.error(
+                "Refusing to read relay credentials at %s: parent directory %s is "
+                "group- or world-writable. Tighten it to mode 0700/0750.",
                 self.path,
-                mode,
-                SAFE_MODE,
+                directory,
             )
+            return None
+
+        # Open with O_NOFOLLOW so a symlink at ``self.path`` produces
+        # ELOOP instead of dereferencing an attacker-controlled target.
         try:
-            with open(self.path, encoding="utf-8") as f:
+            fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError as exc:
+            log.error("Failed to open relay credentials at %s: %s", self.path, exc)
+            return None
+
+        try:
+            mode = stat.S_IMODE(os.fstat(fd).st_mode)
+            if mode & 0o077:
+                log.warning(
+                    "Relay credentials file %s has mode 0%o; recommended is 0%o.",
+                    self.path,
+                    mode,
+                    SAFE_MODE,
+                )
+            with os.fdopen(fd, "r", encoding="utf-8") as f:
+                # Once we've handed fd to fdopen, the with-block closes
+                # it; clear the local so the finally block doesn't
+                # close it twice.
+                fd = -1
                 return cast(dict[str, Any], json.load(f))
         except (OSError, json.JSONDecodeError) as exc:
             log.error("Failed to read relay credentials at %s: %s", self.path, exc)
             return None
+        finally:
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
 
     def save(self, data: dict[str, Any]) -> None:
         """Atomically write the credentials file with mode 0600.
 
-        Writes to ``path.tmp``, fsyncs, sets perms, then renames over the
-        original. The temp file inherits the destination's directory.
+        Order: mkstemp (mode 0600 by default), fchmod (defence in
+        depth), write body, fsync, replace, fsync parent dir.
         """
         directory = os.path.dirname(self.path) or "."
         os.makedirs(directory, exist_ok=True)
+        if not _parent_dir_is_safe(directory):
+            raise OSError(
+                f"Refusing to write credentials at {self.path!r}: parent directory "
+                f"{directory!r} is group- or world-writable. Tighten it to mode 0700/0750."
+            )
         fd, tmp_path = tempfile.mkstemp(prefix=".pulsar-relay-cred-", dir=directory)
         try:
+            # fchmod the open fd before writing so the secret is never
+            # observable through a wider mode.
+            os.fchmod(fd, SAFE_MODE)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, sort_keys=True)
                 f.flush()
                 os.fsync(f.fileno())
-            os.chmod(tmp_path, SAFE_MODE)
             os.replace(tmp_path, self.path)
+            # Durably commit the rename so a crash doesn't lose the
+            # rotated refresh token.
+            try:
+                dir_fd = os.open(directory, os.O_DIRECTORY)
+            except OSError:
+                dir_fd = None
+            if dir_fd is not None:
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
         except Exception:
-            # Best-effort cleanup of the temp file on failure.
             try:
                 os.unlink(tmp_path)
             except OSError:

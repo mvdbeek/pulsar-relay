@@ -53,6 +53,11 @@ from pulsar_relay.auth.topic_storage import (
 )
 from pulsar_relay.config import settings, validate_startup_secrets
 from pulsar_relay.core.connections import ConnectionManager
+from pulsar_relay.core.idempotency import (
+    IdempotencyStorage,
+    InMemoryIdempotencyStorage,
+    ValkeyIdempotencyStorage,
+)
 from pulsar_relay.core.polling import PollManager
 from pulsar_relay.core.pubsub import PubSubCoordinator
 from pulsar_relay.storage.memory import MemoryStorage
@@ -124,7 +129,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         device_storage: DeviceCodeStorage = ValkeyDeviceCodeStorage(storage._client)
         oidc_state_storage: OIDCStateStorage = ValkeyOIDCStateStorage(storage._client)
         jwt_denylist: JWTDenylistStorage = ValkeyJWTDenylist(storage._client)
-        log.info("Initialized Valkey refresh/device/oidc-state/jwt-denylist storage")
+        idempotency_storage: IdempotencyStorage = ValkeyIdempotencyStorage(storage._client)
+        log.info("Initialized Valkey refresh/device/oidc-state/jwt-denylist/idempotency storage")
     else:
         log.info("Using in-memory storage backend")
         storage = MemoryStorage(max_messages_per_topic=settings.max_messages_per_topic)
@@ -137,7 +143,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         device_storage = InMemoryDeviceCodeStorage()
         oidc_state_storage = InMemoryOIDCStateStorage()
         jwt_denylist = InMemoryJWTDenylist()
-        log.info("Initialized in-memory refresh/device/oidc-state/jwt-denylist storage")
+        idempotency_storage = InMemoryIdempotencyStorage()
+        log.info("Initialized in-memory refresh/device/oidc-state/jwt-denylist/idempotency storage")
 
     # Initialize connection manager
     connection_manager = ConnectionManager()
@@ -230,6 +237,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.user_storage = user_storage
     app.state.topic_storage = topic_storage
     app.state.pubsub_coordinator = pubsub_coordinator
+    app.state.idempotency_storage = idempotency_storage
 
     # Inject dependencies into API routers
     messages.set_storage(storage)

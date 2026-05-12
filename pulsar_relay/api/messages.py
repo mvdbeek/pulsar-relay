@@ -10,6 +10,7 @@ from pulsar_relay.api.limits import limiter
 from pulsar_relay.auth.dependencies import get_or_create_topic, require_permission
 from pulsar_relay.auth.models import User
 from pulsar_relay.core.connections import ConnectionManager
+from pulsar_relay.core.idempotency import DEFAULT_IDEMPOTENCY_TTL_SECONDS
 from pulsar_relay.core.polling import PollManager
 from pulsar_relay.core.pubsub import PubSubCoordinator
 from pulsar_relay.models import (
@@ -99,13 +100,25 @@ async def create_message(
     # This will auto-create the topic if it doesn't exist, with current_user as owner
     await get_or_create_topic(message.topic, current_user)
 
+    # Idempotency-Key dedupe (Client H#2). The pulsar-relay-client v1.1
+    # generates one UUID per logical publish and reuses it across
+    # retry attempts; we cache the response so a duplicate POST
+    # returns the original message_id instead of writing again.
+    owner_id = current_user.user_id
+    idem_key = request.headers.get("Idempotency-Key")
+    idem_storage = getattr(request.app.state, "idempotency_storage", None)
+    if idem_key and idem_storage is not None:
+        cached = await idem_storage.try_claim(owner_id, idem_key, DEFAULT_IDEMPOTENCY_TTL_SECONDS)
+        if cached:
+            log.info("Idempotency-Key hit for owner=%s key=%s — returning cached body", owner_id, idem_key)
+            return MessageResponse.model_validate(cached)
+
     timestamp = datetime.now(timezone.utc)
 
     # Internal channel key is composite (owner_id, topic_name) so user
     # A's "jobs" cannot fan out to user B's "jobs" subscribers (API H#5).
     # External wire (the WebSocket subscribe topic, the Message.topic
     # field) keeps the bare name.
-    owner_id = current_user.user_id
     channel = f"{owner_id}/{message.topic}"
 
     # Track metrics — metric labels intentionally use the composite key
@@ -144,7 +157,10 @@ async def create_message(
         if _poll_manager:
             await _poll_manager.broadcast_to_topic(channel, message_dict)
 
-    return MessageResponse(message_id=message_id, topic=message.topic, timestamp=timestamp)
+    response = MessageResponse(message_id=message_id, topic=message.topic, timestamp=timestamp)
+    if idem_key and idem_storage is not None:
+        await idem_storage.record(owner_id, idem_key, response.model_dump(mode="json"), DEFAULT_IDEMPOTENCY_TTL_SECONDS)
+    return response
 
 
 @router.post("/messages/bulk", response_model=BulkMessageResponse, status_code=status.HTTP_207_MULTI_STATUS)
@@ -165,6 +181,18 @@ async def create_bulk_messages(
         BulkMessageResponse with results for each message
     """
     storage = get_storage()
+
+    # Idempotency-Key dedupe (Client H#2) — see create_message above
+    # for the rationale. One header applies to the whole bulk submit;
+    # a retried bulk POST returns the original 207 body verbatim.
+    owner_id = current_user.user_id
+    idem_key = request.headers.get("Idempotency-Key")
+    idem_storage = getattr(request.app.state, "idempotency_storage", None)
+    if idem_key and idem_storage is not None:
+        cached = await idem_storage.try_claim(owner_id, idem_key, DEFAULT_IDEMPOTENCY_TTL_SECONDS)
+        if cached:
+            log.info("Bulk Idempotency-Key hit for owner=%s key=%s — returning cached body", owner_id, idem_key)
+            return BulkMessageResponse.model_validate(cached)
 
     # Validate access to ALL unique topics upfront - fail early if any are denied
     unique_topics = {msg.topic for msg in payload.messages}
@@ -190,7 +218,6 @@ async def create_bulk_messages(
     accepted = 0
     rejected = 0
 
-    owner_id = current_user.user_id
     for message in payload.messages:
         try:
             timestamp = datetime.now(timezone.utc)
@@ -230,7 +257,12 @@ async def create_bulk_messages(
             results.append(BulkMessageResult(message_id=None, topic=message.topic, status="rejected", error=str(e)))
             rejected += 1
 
-    return BulkMessageResponse(
+    bulk_response = BulkMessageResponse(
         results=results,
         summary={"total": len(payload.messages), "accepted": accepted, "rejected": rejected},
     )
+    if idem_key and idem_storage is not None:
+        await idem_storage.record(
+            owner_id, idem_key, bulk_response.model_dump(mode="json"), DEFAULT_IDEMPOTENCY_TTL_SECONDS
+        )
+    return bulk_response

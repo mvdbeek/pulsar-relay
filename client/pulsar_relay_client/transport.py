@@ -10,12 +10,15 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 import threading
 import time
+import uuid
 from typing import Any, Callable, cast
 
 import requests
 
+from ._url import normalize_relay_url
 from .auth import RelayAuthManager
 
 log = logging.getLogger(__name__)
@@ -78,7 +81,7 @@ class RelayTransport:
                 fake-clock-driven equivalent) so they don't actually wait
                 on the wall clock.
         """
-        self.relay_url = relay_url.rstrip("/")
+        self.relay_url = normalize_relay_url(relay_url)
         if auth_manager is not None:
             self.auth_manager = auth_manager
         else:
@@ -228,16 +231,28 @@ class RelayTransport:
         if metadata is not None:
             message_data["metadata"] = metadata
 
+        # Idempotency-Key generated ONCE per logical publish (not per
+        # HTTP attempt). The retry loop below can re-issue the same
+        # request several times; the server dedupes by this key so a
+        # 502-after-persist or network blip doesn't cause duplicates
+        # (Client H#2).
+        idem_key = uuid.uuid4().hex
+        headers = self._get_headers()
+        headers["Idempotency-Key"] = idem_key
+
         def _post() -> requests.Response:
-            return self.session.post(url, json=message_data, headers=self._get_headers(), timeout=self.timeout)
+            return self.session.post(url, json=message_data, headers=headers, timeout=self.timeout)
 
         # Use retry logic with exponential backoff
         response = self._retry_with_backoff(_post, "post_message")
 
         if response.status_code == 401:
-            # Token might have expired, invalidate and retry
+            # Token might have expired, invalidate and retry. Refresh
+            # the headers (and the Idempotency-Key stays the same).
             log.debug("Received 401, invalidating token and retrying")
             self.auth_manager.invalidate()
+            headers = self._get_headers()
+            headers["Idempotency-Key"] = idem_key
             response = self._retry_with_backoff(_post, "post_message")
 
         response.raise_for_status()
@@ -265,14 +280,22 @@ class RelayTransport:
 
         request_data = {"messages": messages}
 
+        # One key per logical bulk publish — see post_message for the
+        # rationale (Client H#2).
+        idem_key = uuid.uuid4().hex
+        headers = self._get_headers()
+        headers["Idempotency-Key"] = idem_key
+
         def _post() -> requests.Response:
-            return self.session.post(url, json=request_data, headers=self._get_headers(), timeout=self.timeout)
+            return self.session.post(url, json=request_data, headers=headers, timeout=self.timeout)
 
         # Use retry logic with exponential backoff
         response = self._retry_with_backoff(_post, "post_bulk_messages")
 
         if response.status_code == 401:
             self.auth_manager.invalidate()
+            headers = self._get_headers()
+            headers["Idempotency-Key"] = idem_key
             response = self._retry_with_backoff(_post, "post_bulk_messages")
 
         response.raise_for_status()
@@ -432,21 +455,49 @@ class RelayTransport:
             )
 
     def _persist_cursor_locked(self) -> None:
+        """Persist the cursor file atomically with strict permissions.
+
+        Closes Client H#3 / Client Medium #10:
+
+        * Uses :func:`tempfile.mkstemp` for the temp file rather than a
+          deterministic ``path + ".tmp"`` so two concurrent writers in
+          different processes never stomp on each other.
+        * Sets mode ``0o600`` on the temp file BEFORE writing the body;
+          the previous code wrote first with the process umask
+          (often ``0o644``), then ``chmod``ed only on the final path —
+          leaving the secret topic-name set briefly world-readable.
+        * ``fsync``s the file and the parent directory so the rename
+          is durable on crash.
+        """
         path = self._cursor_path
         if path is None:
             return
-        directory = os.path.dirname(path)
-        if directory:
-            try:
-                os.makedirs(directory, exist_ok=True)
-            except Exception:
-                log.exception("Failed to create relay cursor directory %s", directory)
-                return
-        tmp_path = path + ".tmp"
+        directory = os.path.dirname(path) or "."
         try:
-            with open(tmp_path, "w") as fh:
+            os.makedirs(directory, exist_ok=True)
+        except Exception:
+            log.exception("Failed to create relay cursor directory %s", directory)
+            return
+
+        fd, tmp_path = tempfile.mkstemp(prefix=".pulsar-relay-cursor-", dir=directory)
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(self._last_message_ids, fh)
+                fh.flush()
+                os.fsync(fh.fileno())
+            # fd is closed at this point. Promote tmp to the canonical path.
             os.replace(tmp_path, path)
+            # Durably commit the rename.
+            try:
+                dir_fd = os.open(directory, os.O_DIRECTORY)
+            except OSError:
+                dir_fd = None
+            if dir_fd is not None:
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
         except Exception:
             log.exception("Failed to persist relay cursor to %s", path)
             try:

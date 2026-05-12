@@ -13,7 +13,7 @@ from pulsar_relay_client.testing import FakeAuthManager
 
 def _new_transport(cursor_path=None):
     return RelayTransport(
-        "http://relay.example/",
+        "http://localhost:8080/",  # http only accepted for localhost; remote hosts must use https
         cursor_path=cursor_path,
         auth_manager=FakeAuthManager(),
     )

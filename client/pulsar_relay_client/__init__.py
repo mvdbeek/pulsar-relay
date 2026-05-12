@@ -1,5 +1,6 @@
 """pulsar-relay-client — Python client library for the pulsar-relay HTTP wire contract."""
 
+from ._url import RelayURLError
 from .auth import (
     PasswordAuthenticator,
     RefreshTokenAuthenticator,
@@ -34,6 +35,8 @@ from .transport import (
 __version__ = "1.0.0"
 
 __all__ = [
+    # url validation
+    "RelayURLError",
     # auth
     "PasswordAuthenticator",
     "RefreshTokenAuthenticator",

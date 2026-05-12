@@ -25,6 +25,7 @@ from typing import cast
 
 import requests
 
+from ._url import normalize_relay_url
 from .credentials import CredentialsFile, CredentialsStore, utcnow_iso
 
 log = logging.getLogger(__name__)
@@ -178,7 +179,11 @@ class RelayAuthManager:
         credentials_file: str | None = None,
         credentials_store: CredentialsStore | None = None,
     ) -> None:
-        self.relay_url = relay_url.rstrip("/")
+        # Validates http://non-localhost / userinfo / path / query (see
+        # ``_url.normalize_relay_url``). Raises RelayURLError on any of
+        # those — the legacy ``rstrip("/")`` would have silently sent a
+        # bearer JWT over plaintext.
+        self.relay_url = normalize_relay_url(relay_url)
         self._token: str | None = None
         self._token_expiry: datetime | None = None
         self._lock = threading.Lock()

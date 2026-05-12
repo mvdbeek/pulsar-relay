@@ -14,6 +14,8 @@ from typing import Any, Protocol, cast, runtime_checkable
 
 import requests
 
+from ._url import normalize_relay_url, quote_topic
+
 log = logging.getLogger(__name__)
 
 
@@ -82,7 +84,10 @@ class HttpRelayClient:
         timeout: int = 10,
         session: requests.Session | None = None,
     ) -> None:
-        self.relay_url = relay_url.rstrip("/")
+        # Validates the URL and normalizes it (drops trailing slash,
+        # rejects http://non-localhost, rejects userinfo, rejects
+        # path/query/fragment). Raises RelayURLError on rejection.
+        self.relay_url = normalize_relay_url(relay_url)
         self._timeout = timeout
         self._session = session if session is not None else requests.Session()
 
@@ -148,8 +153,13 @@ class HttpRelayClient:
         raise RelayClientError(f"relay topic POST {topic_name} failed: HTTP {resp.status_code}")
 
     def _verify_existing_topic_owner(self, headers: dict[str, str], topic_name: str, expected_owner_id: str) -> None:
+        # URL-encode the topic name before it goes into a path segment
+        # (Client H#1: a name containing ``../`` would otherwise escape
+        # the topics namespace).
         check = self._session.get(
-            f"{self.relay_url}/api/v1/topics/{topic_name}", headers=headers, timeout=self._timeout
+            f"{self.relay_url}/api/v1/topics/{quote_topic(topic_name)}",
+            headers=headers,
+            timeout=self._timeout,
         )
         if check.status_code != 200:
             raise TopicOwnershipConflictError(
