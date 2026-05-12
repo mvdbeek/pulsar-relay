@@ -172,7 +172,7 @@ async def get_topic(
     """
     topic_storage = get_topic_storage()
 
-    topic = await topic_storage.get_topic(topic_name)
+    topic = await topic_storage.get_topic(current_user.user_id, topic_name)
     if not topic:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -181,6 +181,7 @@ async def get_topic(
 
     # Check if user has access
     can_access = await topic_storage.user_can_access(
+        owner_id=current_user.user_id,
         topic_name=topic_name,
         user_id=current_user.user_id,
         permission_type="read",
@@ -240,7 +241,7 @@ async def get_topic_messages(
     message_storage = get_storage()
 
     # Verify topic exists
-    topic = await topic_storage.get_topic(topic_name)
+    topic = await topic_storage.get_topic(current_user.user_id, topic_name)
     if not topic:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -249,6 +250,7 @@ async def get_topic_messages(
 
     # Check if user has read access
     can_access = await topic_storage.user_can_access(
+        owner_id=current_user.user_id,
         topic_name=topic_name,
         user_id=current_user.user_id,
         permission_type="read",
@@ -276,10 +278,12 @@ async def get_topic_messages(
         )
     limit = min(limit, 100)
 
-    # Get messages from storage
-    # Use reverse=True for desc (newest first), reverse=False for asc (oldest first)
+    # Get messages from storage. Owner is the bearer — same as the
+    # topic_storage lookup above.
     reverse = order == "desc"
-    raw_messages = await message_storage.get_messages(topic=topic_name, since=cursor, limit=limit, reverse=reverse)
+    raw_messages = await message_storage.get_messages(
+        owner_id=current_user.user_id, topic=topic_name, since=cursor, limit=limit, reverse=reverse
+    )
 
     # Convert to response model
     messages = [
@@ -327,7 +331,7 @@ async def update_topic(
     """
     topic_storage = get_topic_storage()
 
-    topic = await topic_storage.get_topic(topic_name)
+    topic = await topic_storage.get_topic(current_user.user_id, topic_name)
     if not topic:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -342,6 +346,7 @@ async def update_topic(
         )
 
     updated_topic = await topic_storage.update_topic(
+        owner_id=current_user.user_id,
         topic_name=topic_name,
         is_public=update_data.is_public,
         description=update_data.description,
@@ -385,7 +390,7 @@ async def delete_topic(
     topic_storage = get_topic_storage()
     user_storage = get_user_storage()
 
-    topic = await topic_storage.get_topic(topic_name)
+    topic = await topic_storage.get_topic(current_user.user_id, topic_name)
     if not topic:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -400,7 +405,7 @@ async def delete_topic(
         )
 
     # Delete topic
-    deleted = await topic_storage.delete_topic(topic_name)
+    deleted = await topic_storage.delete_topic(current_user.user_id, topic_name)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -439,7 +444,7 @@ async def grant_topic_access(
     topic_storage = get_topic_storage()
     user_storage = get_user_storage()
 
-    topic = await topic_storage.get_topic(topic_name)
+    topic = await topic_storage.get_topic(current_user.user_id, topic_name)
     if not topic:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -473,7 +478,7 @@ async def grant_topic_access(
 
     # Grant access
     try:
-        await topic_storage.grant_access(topic_name, target_user.user_id)
+        await topic_storage.grant_access(current_user.user_id, topic_name, target_user.user_id)
         logger.info(f"Granted access to topic '{topic_name}' for user {target_user.username}")
 
         return TopicPermission(
@@ -508,7 +513,7 @@ async def revoke_topic_access(
     """
     topic_storage = get_topic_storage()
 
-    topic = await topic_storage.get_topic(topic_name)
+    topic = await topic_storage.get_topic(current_user.user_id, topic_name)
     if not topic:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -523,7 +528,7 @@ async def revoke_topic_access(
         )
 
     # Revoke access
-    revoked = await topic_storage.revoke_access(topic_name, user_id)
+    revoked = await topic_storage.revoke_access(current_user.user_id, topic_name, user_id)
     if not revoked:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -555,7 +560,7 @@ async def list_topic_permissions(
     topic_storage = get_topic_storage()
     user_storage = get_user_storage()
 
-    topic = await topic_storage.get_topic(topic_name)
+    topic = await topic_storage.get_topic(current_user.user_id, topic_name)
     if not topic:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

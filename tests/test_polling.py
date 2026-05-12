@@ -298,15 +298,21 @@ class TestPollingEndpoint:
             assert poll_data["messages"][0]["payload"]["data"] == "test message"
 
     @pytest.mark.anyio
-    async def test_poll_with_since_parameter(self, test_storage, test_client, auth_token):
+    async def test_poll_with_since_parameter(self, test_storage, test_client, auth_token, auth_storage):
         """Test polling with since parameter for pagination."""
 
-        # Save multiple messages and track IDs
+        # Save multiple messages under the bearer's owner_id — storage
+        # is keyed by (owner_id, topic) since Phase 3c.
+        user = await auth_storage.get_user_by_username("user")
         msg_1 = await test_storage.save_message(
-            "test-topic", {"index": 1}, datetime.datetime.now(datetime.timezone.utc)
+            user.user_id, "test-topic", {"index": 1}, datetime.datetime.now(datetime.timezone.utc)
         )
-        await test_storage.save_message("test-topic", {"index": 2}, datetime.datetime.now(datetime.timezone.utc))
-        await test_storage.save_message("test-topic", {"index": 3}, datetime.datetime.now(datetime.timezone.utc))
+        await test_storage.save_message(
+            user.user_id, "test-topic", {"index": 2}, datetime.datetime.now(datetime.timezone.utc)
+        )
+        await test_storage.save_message(
+            user.user_id, "test-topic", {"index": 3}, datetime.datetime.now(datetime.timezone.utc)
+        )
 
         # Poll with since=msg_1 (should get msg_2 and msg_3)
         response = test_client.post(
@@ -367,13 +373,21 @@ class TestPollingEndpoint:
         assert isinstance(data["messages"], list)
 
     @pytest.mark.anyio
-    async def test_poll_denied_for_other_users_private_topic(self, test_client, auth_token, auth_storage):
-        """Polling a private topic owned by another user must return 403."""
+    async def test_poll_other_users_topic_is_isolated(self, test_client, auth_token, auth_storage):
+        """Under per-user topic namespacing (Phase 3c, API H#5) the
+        bearer's poll resolves to ``(bearer.sub, topic_name)`` —
+        another user's topic with the same bare name is simply
+        invisible. The poll succeeds (the bearer is subscribed to
+        their own empty topic) and returns no messages.
+
+        Previously this test asserted 403 against a flat-namespace
+        ``allowed_user_ids`` check; that whole code path was removed
+        in Phase 4 along with the cross-user-sharing feature."""
         from pulsar_relay.auth.models import TopicCreate
 
         admin = await auth_storage.get_user_by_username("admin")
         topic_storage = app.state.topic_storage
-        await topic_storage.create_topic(admin.user_id, TopicCreate(topic_name="admins-private-poll", is_public=False))
+        await topic_storage.create_topic(admin.user_id, TopicCreate(topic_name="admins-private-poll"))
 
         response = test_client.post(
             "/messages/poll",
@@ -384,6 +398,8 @@ class TestPollingEndpoint:
             headers={"Authorization": f"Bearer {auth_token}"},
         )
 
-        assert response.status_code == 403
-        assert "access denied" in response.json()["detail"].lower()
-        assert "admins-private-poll" in response.json()["detail"]
+        # The bearer is subscribed to their OWN "admins-private-poll"
+        # (auto-create semantics for non-existent topics); admin's
+        # topic of the same name is untouched.
+        assert response.status_code == 200
+        assert response.json()["messages"] == []

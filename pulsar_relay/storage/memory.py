@@ -33,8 +33,14 @@ class MemoryStorage(StorageBackend):
             self._lock = asyncio.Lock()
         return self._lock
 
+    @staticmethod
+    def _key(owner_id: str, topic: str) -> str:
+        """Compose the per-owner namespaced storage key."""
+        return f"{owner_id}/{topic}"
+
     async def save_message(
         self,
+        owner_id: str,
         topic: str,
         payload: dict[str, Any],
         timestamp: datetime,
@@ -45,8 +51,8 @@ class MemoryStorage(StorageBackend):
         Returns:
             Generated message ID (UUID-based)
         """
-        # Generate a UUID-based message ID
         message_id = f"msg_{uuid.uuid4().hex[:12]}"
+        key = self._key(owner_id, topic)
 
         async with self._get_lock():
             message = {
@@ -56,71 +62,60 @@ class MemoryStorage(StorageBackend):
                 "timestamp": timestamp.isoformat(),
                 "metadata": metadata or {},
             }
-            self._messages[topic].append(message)
+            self._messages[key].append(message)
 
         return message_id
 
     async def get_messages(
-        self, topic: str, since: Optional[str] = None, limit: int = 10, reverse: bool = False
+        self,
+        owner_id: str,
+        topic: str,
+        since: Optional[str] = None,
+        limit: int = 10,
+        reverse: bool = False,
     ) -> list[dict[str, Any]]:
-        """Get messages from a topic.
-
-        Args:
-            topic: Topic name
-            since: Message ID to start from (exclusive)
-            limit: Maximum number of messages to return
-            reverse: If True, return messages in reverse chronological order (newest first)
-
-        Returns:
-            List of messages
-        """
+        """Get messages from ``owner_id``'s topic."""
+        key = self._key(owner_id, topic)
         async with self._get_lock():
-            if topic not in self._messages:
+            if key not in self._messages:
                 return []
 
-            messages = list(self._messages[topic])
+            messages = list(self._messages[key])
 
-            # If reverse, start from the end
             if reverse:
                 messages.reverse()
 
-            # Filter by since if provided
             if since:
                 try:
-                    # Find the index of the since message
                     since_idx = next(i for i, msg in enumerate(messages) if msg["message_id"] == since)
-                    # Return messages after the since message
                     messages = messages[since_idx + 1 :]
                 except StopIteration:
-                    # If since message not found, return all messages
                     pass
 
-            # Limit the number of messages
             return messages[:limit]
 
-    async def trim_topic(self, topic: str, max_messages: int) -> int:
+    async def trim_topic(self, owner_id: str, topic: str, max_messages: int) -> int:
         """Trim old messages from a topic."""
+        key = self._key(owner_id, topic)
         async with self._get_lock():
-            if topic not in self._messages:
+            if key not in self._messages:
                 return 0
 
-            messages = self._messages[topic]
+            messages = self._messages[key]
             current_length = len(messages)
-
             if current_length <= max_messages:
                 return 0
 
-            # Remove oldest messages
             messages_to_remove = current_length - max_messages
             for _ in range(messages_to_remove):
                 messages.popleft()
-
             return messages_to_remove
 
-    async def get_topic_length(self, topic: str) -> int:
+    async def get_topic_length(self, owner_id: str, topic: str) -> int:
         """Get the number of messages in a topic."""
+        key = self._key(owner_id, topic)
         async with self._get_lock():
-            return len(self._messages.get(topic, []))
+            return len(self._messages.get(key, []))
 
     async def health_check(self) -> dict:
         """Check if storage is healthy."""

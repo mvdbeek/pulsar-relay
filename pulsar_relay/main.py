@@ -45,7 +45,12 @@ from pulsar_relay.auth.refresh import (
     ValkeyRefreshTokenStorage,
 )
 from pulsar_relay.auth.storage import InMemoryUserStorage, UserStorage, ValkeyUserStorage
-from pulsar_relay.auth.topic_storage import InMemoryTopicStorage, TopicStorage, ValkeyTopicStorage
+from pulsar_relay.auth.topic_storage import (
+    InMemoryTopicStorage,
+    TopicStorage,
+    ValkeyTopicStorage,
+    scan_for_legacy_keys,
+)
 from pulsar_relay.config import settings, validate_startup_secrets
 from pulsar_relay.core.connections import ConnectionManager
 from pulsar_relay.core.polling import PollManager
@@ -90,6 +95,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Connect to Valkey
         await storage.connect()
         log.info(f"Connected to Valkey at {settings.valkey_host}:{settings.valkey_port}")
+
+        # Scan for pre-namespacing topic keys (API H#5 migration). The
+        # Phase 3c security fix moves topic keys from a flat namespace
+        # (``topic:{name}``) to ``topic:{owner_id}/{name}``. Mixing old
+        # and new shapes silently breaks every storage code path; we
+        # refuse to start when legacy keys are present. Bypassable
+        # via PULSAR_ALLOW_INSECURE_DEFAULTS=1 for local-dev.
+        legacy_keys = await scan_for_legacy_keys(storage._client, limit=20)
+        if legacy_keys:
+            msg = (
+                "Refusing to start: found pre-Phase-3c flat-namespace topic keys in Valkey. "
+                f"Examples: {legacy_keys[:5]}. Topics are now keyed by (owner_id, name). "
+                "Migrate by FLUSHing the topic/stream/meta keys or by re-creating topics "
+                "under each owner. To bypass for local-dev set PULSAR_ALLOW_INSECURE_DEFAULTS=1."
+            )
+            if settings.allow_insecure_defaults:
+                log.warning(msg)
+            else:
+                log.error(msg)
+                raise SystemExit(2)
+
         topic_storage: TopicStorage = ValkeyTopicStorage(storage._client)
         log.info("Initialized Valkey Topic Storage")
         user_storage: UserStorage = ValkeyUserStorage(storage._client)

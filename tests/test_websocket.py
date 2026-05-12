@@ -227,13 +227,20 @@ class TestWebSocketBasics:
             assert response["type"] == "error"
             assert response["code"] == "UNKNOWN_MESSAGE_TYPE"
 
-    async def test_websocket_subscribe_denied_for_other_users_private_topic(self, setup_app, auth_storage):
-        """Subscribing to a private topic owned by another user must be rejected."""
+    async def test_websocket_subscribe_resolves_in_bearer_namespace(self, setup_app, auth_storage):
+        """Under per-user topic namespacing (API H#5), a WS subscribe
+        from user U for topic name N targets ``(U, N)`` — entirely
+        separate from any other user's ``(other, N)``. Admin's
+        private topic is invisible to the regular user via the bare
+        wire path. The subscribe succeeds (auto-create semantics) and
+        the user is subscribed to their OWN namespace's topic, which
+        will not receive admin's messages."""
         client = setup_app["client"]
         token = setup_app["token"]
         topic_storage = setup_app["topic_storage"]
 
         admin = await auth_storage.get_user_by_username("admin")
+        # Admin creates "admins-only-ws" in their namespace.
         await topic_storage.create_topic(admin.user_id, TopicCreate(topic_name="admins-only-ws", is_public=False))
 
         with client.websocket_connect("/ws", subprotocols=["bearer", f"bearer.{token}"]) as websocket:
@@ -241,12 +248,10 @@ class TestWebSocketBasics:
 
             response = websocket.receive_json()
 
-            assert response["type"] == "error"
-            assert response["code"] == "SUBSCRIPTION_ERROR"
-            # The error message intentionally does NOT echo the denied
-            # topic name back to the client — that would be a topic
-            # enumeration oracle. See security review API Medium #11.
-            assert "admins-only-ws" not in response["message"]
+            # Subscribe succeeds — the bearer is subscribed to *their
+            # own* "admins-only-ws" (entirely separate from admin's).
+            assert response["type"] == "subscribed", response
+            assert "admins-only-ws" in response["topics"]
 
 
 class TestWebSocketMessageDelivery:

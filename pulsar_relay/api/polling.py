@@ -81,6 +81,7 @@ async def long_poll(
 
     for topic in poll_request.topics:
         can_access = await topic_storage.user_can_access(
+            owner_id=current_user.user_id,
             topic_name=topic,
             user_id=current_user.user_id,
             permission_type="read",
@@ -99,15 +100,17 @@ async def long_poll(
         )
 
     messages = []
+    owner_id = current_user.user_id
 
     # First, check for any recent messages the client hasn't seen
     if poll_request.since:
         # Client wants to catch up on messages
         # The message IDs in `since` are now the same as the storage IDs (stream IDs for Valkey)
         for topic in poll_request.topics:
-            # Get the last message ID the client saw for this topic
             since_message_id = poll_request.since.get(topic)
-            recent_messages = await storage.get_messages(topic, since=since_message_id, limit=100)
+            recent_messages = await storage.get_messages(
+                owner_id=owner_id, topic=topic, since=since_message_id, limit=100
+            )
             for msg in recent_messages:
                 messages.append(
                     {
@@ -125,9 +128,12 @@ async def long_poll(
             logger.debug(f"Returning {len(messages)} cached messages immediately")
             return PollResponse(messages=messages, has_more=len(messages) >= 100)
 
-    # No cached messages, create waiter for new messages
+    # No cached messages, create waiter for new messages. Subscribe
+    # under the composite ``{owner_id}/{topic}`` channel so a publish
+    # to A's "jobs" doesn't deliver to B's "jobs" subscribers (API H#5).
+    composite_topics = [f"{owner_id}/{t}" for t in poll_request.topics]
     try:
-        waiter = await poll_manager.create_waiter(poll_request.topics, user_id=current_user.user_id)
+        waiter = await poll_manager.create_waiter(composite_topics, user_id=current_user.user_id)
     except PollWaiterLimitExceededError as exc:
         logger.warning("Poll waiter limit exceeded for user %s: %s", current_user.user_id, exc)
         raise HTTPException(

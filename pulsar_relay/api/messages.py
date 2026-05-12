@@ -101,12 +101,21 @@ async def create_message(
 
     timestamp = datetime.now(timezone.utc)
 
-    # Track metrics
-    messages_received_total.labels(topic=message.topic).inc()
+    # Internal channel key is composite (owner_id, topic_name) so user
+    # A's "jobs" cannot fan out to user B's "jobs" subscribers (API H#5).
+    # External wire (the WebSocket subscribe topic, the Message.topic
+    # field) keeps the bare name.
+    owner_id = current_user.user_id
+    channel = f"{owner_id}/{message.topic}"
+
+    # Track metrics — metric labels intentionally use the composite key
+    # so per-tenant series are distinct.
+    messages_received_total.labels(topic=channel).inc()
 
     # Save to storage - storage backend generates and returns the message ID
-    with message_latency_seconds.labels(topic=message.topic).time():
+    with message_latency_seconds.labels(topic=channel).time():
         message_id = await storage.save_message(
+            owner_id=owner_id,
             topic=message.topic,
             payload=message.payload,
             timestamp=timestamp,
@@ -127,16 +136,13 @@ async def create_message(
     # If pub/sub coordinator is available, use it for cross-worker broadcasting
     # Otherwise, fall back to local-only broadcasting
     if _pubsub_coordinator:
-        # Publish to Valkey pub/sub - all workers will receive and broadcast to their local clients
-        await _pubsub_coordinator.publish_message(message.topic, message_dict)
+        await _pubsub_coordinator.publish_message(channel, message_dict)
     else:
-        # Local-only broadcasting (single worker or in-memory mode)
         manager = get_manager()
         if manager:
-            await manager.broadcast(message.topic, message_dict)
-
+            await manager.broadcast(channel, message_dict)
         if _poll_manager:
-            await _poll_manager.broadcast_to_topic(message.topic, message_dict)
+            await _poll_manager.broadcast_to_topic(channel, message_dict)
 
     return MessageResponse(message_id=message_id, topic=message.topic, timestamp=timestamp)
 
@@ -184,19 +190,20 @@ async def create_bulk_messages(
     accepted = 0
     rejected = 0
 
+    owner_id = current_user.user_id
     for message in payload.messages:
         try:
             timestamp = datetime.now(timezone.utc)
+            channel = f"{owner_id}/{message.topic}"
 
-            # Save to storage - storage backend generates and returns the message ID
             message_id = await storage.save_message(
+                owner_id=owner_id,
                 topic=message.topic,
                 payload=message.payload,
                 timestamp=timestamp,
                 metadata=message.metadata,
             )
 
-            # Prepare message for broadcasting
             ws_message = WebSocketMessage(
                 type="message",
                 message_id=message_id,
@@ -207,19 +214,14 @@ async def create_bulk_messages(
             )
             message_dict = ws_message.model_dump(mode="json")
 
-            # If pub/sub coordinator is available, use it for cross-worker broadcasting
-            # Otherwise, fall back to local-only broadcasting
             if _pubsub_coordinator:
-                # Publish to Valkey pub/sub - all workers will receive and broadcast to their local clients
-                await _pubsub_coordinator.publish_message(message.topic, message_dict)
+                await _pubsub_coordinator.publish_message(channel, message_dict)
             else:
-                # Local-only broadcasting (single worker or in-memory mode)
                 manager = get_manager()
                 if manager:
-                    await manager.broadcast(message.topic, message_dict)
-
+                    await manager.broadcast(channel, message_dict)
                 if _poll_manager:
-                    await _poll_manager.broadcast_to_topic(message.topic, message_dict)
+                    await _poll_manager.broadcast_to_topic(channel, message_dict)
 
             results.append(BulkMessageResult(message_id=message_id, topic=message.topic, status="accepted"))
             accepted += 1

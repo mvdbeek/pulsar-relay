@@ -98,30 +98,24 @@ class ValkeyStorage(StorageBackend):
             self._connected = False
             logger.info("Disconnected from Valkey")
 
-    def _get_stream_key(self, topic: str) -> str:
-        """Get the Valkey stream key for a topic.
+    def _get_stream_key(self, owner_id: str, topic: str) -> str:
+        """Stream key namespaced by topic owner (API H#5).
 
-        Args:
-            topic: Topic name
-
-        Returns:
-            Stream key in format "stream:topic:{topic}"
+        Returns ``stream:topic:{owner_id}/{topic}``. Two users with the
+        same bare topic name have entirely distinct streams.
         """
-        return f"stream:topic:{topic}"
+        return f"stream:topic:{owner_id}/{topic}"
 
-    def _get_metadata_key(self, topic: str) -> str:
-        """Get the Valkey hash key for topic metadata.
+    def _get_metadata_key(self, owner_id: str, topic: str) -> str:
+        """Metadata key namespaced by topic owner.
 
-        Args:
-            topic: Topic name
-
-        Returns:
-            Metadata key in format "meta:topic:{topic}"
+        Returns ``meta:topic:{owner_id}/{topic}``.
         """
-        return f"meta:topic:{topic}"
+        return f"meta:topic:{owner_id}/{topic}"
 
     async def save_message(
         self,
+        owner_id: str,
         topic: str,
         payload: dict[str, Any],
         timestamp: datetime,
@@ -141,7 +135,7 @@ class ValkeyStorage(StorageBackend):
         if not self._client:
             raise RuntimeError("Not connected to Valkey")
 
-        stream_key = self._get_stream_key(topic)
+        stream_key = self._get_stream_key(owner_id, topic)
 
         # Prepare stream entry as list of tuples (GLIDE API requirement)
         # Valkey Streams stores fields as key-value pairs
@@ -182,23 +176,18 @@ class ValkeyStorage(StorageBackend):
             raise
 
     async def get_messages(
-        self, topic: str, since: Optional[str] = None, limit: int = 10, reverse: bool = False
+        self,
+        owner_id: str,
+        topic: str,
+        since: Optional[str] = None,
+        limit: int = 10,
+        reverse: bool = False,
     ) -> list[dict[str, Any]]:
-        """Retrieve messages from Valkey Stream.
-
-        Args:
-            topic: Topic name
-            since: Message ID (stream ID) to start from (exclusive), or None for beginning/end
-            limit: Maximum number of messages to retrieve
-            reverse: If True, use XREVRANGE to get messages in reverse order (newest first)
-
-        Returns:
-            List of message dictionaries
-        """
+        """Retrieve messages from ``owner_id``'s Valkey Stream."""
         if not self._client:
             raise RuntimeError("Not connected to Valkey")
 
-        stream_key = self._get_stream_key(topic)
+        stream_key = self._get_stream_key(owner_id, topic)
 
         try:
             if reverse:
@@ -259,11 +248,12 @@ class ValkeyStorage(StorageBackend):
             logger.error(f"Failed to get messages from Valkey: {e}")
             raise
 
-    async def trim_topic(self, topic: str, keep_count: int) -> int:
+    async def trim_topic(self, owner_id: str, topic: str, keep_count: int) -> int:
         """Trim a topic to keep only the most recent messages.
 
         Args:
-            topic: Topic name
+            owner_id: Topic owner.
+            topic: Topic name (bare; namespacing applied internally).
             keep_count: Number of messages to keep
 
         Returns:
@@ -272,7 +262,7 @@ class ValkeyStorage(StorageBackend):
         if not self._client:
             raise RuntimeError("Not connected to Valkey")
 
-        stream_key = self._get_stream_key(topic)
+        stream_key = self._get_stream_key(owner_id, topic)
 
         try:
             # Get current length
@@ -294,11 +284,12 @@ class ValkeyStorage(StorageBackend):
             logger.error(f"Failed to trim topic in Valkey: {e}")
             raise
 
-    async def get_topic_length(self, topic: str) -> int:
+    async def get_topic_length(self, owner_id: str, topic: str) -> int:
         """Get the number of messages in a topic.
 
         Args:
-            topic: Topic name
+            owner_id: Topic owner.
+            topic: Topic name (bare).
 
         Returns:
             Number of messages in the topic
@@ -306,7 +297,7 @@ class ValkeyStorage(StorageBackend):
         if not self._client:
             raise RuntimeError("Not connected to Valkey")
 
-        stream_key = self._get_stream_key(topic)
+        stream_key = self._get_stream_key(owner_id, topic)
 
         try:
             length = await self._client.xlen(stream_key)

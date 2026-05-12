@@ -323,19 +323,15 @@ def require_topic_access(topic: str, permission_type: Literal["read", "write"]):
     ) -> User:
         """Check if user has access to the topic.
 
-        Args:
-            current_user: Current user
-
-        Returns:
-            Current user
-
-        Raises:
-            HTTPException: If user lacks access to topic
+        Owner is always the bearer (``current_user``) — topics are
+        per-user-namespaced (API H#5). Cross-user access via shared
+        ``allowed_user_ids`` is not currently expressible in any wire
+        path that uses this dependency.
         """
         topic_storage = get_topic_storage()
 
-        # Check if user can access the topic
         can_access = await topic_storage.user_can_access(
+            owner_id=current_user.user_id,
             topic_name=topic,
             user_id=current_user.user_id,
             permission_type=permission_type,
@@ -377,11 +373,14 @@ async def get_or_create_topic(topic_name: str, current_user: User):
 
     topic_storage = get_topic_storage()
 
-    # Try to get existing topic
-    topic = await topic_storage.get_topic(topic_name)
+    # Topics are scoped to the bearer (API H#5). Look up under
+    # ``(bearer.sub, topic_name)`` — two users having a topic named
+    # ``"jobs"`` is fine; they're stored as distinct records.
+    topic = await topic_storage.get_topic(current_user.user_id, topic_name)
 
     if topic:
         can_write = await topic_storage.user_can_access(
+            owner_id=current_user.user_id,
             topic_name=topic_name,
             user_id=current_user.user_id,
             permission_type="write",
@@ -415,9 +414,10 @@ async def get_or_create_topic(topic_name: str, current_user: User):
         # Topic was created by another concurrent request - retry the get
         if "already exists" in str(e):
             logger.debug(f"Topic '{topic_name}' was created by concurrent request, retrying get")
-            topic = await topic_storage.get_topic(topic_name)
+            topic = await topic_storage.get_topic(current_user.user_id, topic_name)
             if topic:
                 can_write = await topic_storage.user_can_access(
+                    owner_id=current_user.user_id,
                     topic_name=topic_name,
                     user_id=current_user.user_id,
                     permission_type="write",

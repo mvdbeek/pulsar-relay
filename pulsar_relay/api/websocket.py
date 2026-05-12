@@ -198,6 +198,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             for topic in subscribe_msg.topics:
                 can_access = await topic_storage.user_can_access(
+                    owner_id=user.user_id,
                     topic_name=topic,
                     user_id=user.user_id,
                     permission_type="read",
@@ -217,11 +218,16 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.close()
                 return
 
-            # All topics are allowed - subscribe to them
+            # All topics are allowed - subscribe to them.
+            # The ConnectionManager routes by channel name; for
+            # per-user topic namespacing we register subscriptions
+            # under ``{owner_id}/{topic}`` (API H#5) so a publish to
+            # A's "jobs" doesn't fan out to B's "jobs" subscribers.
+            # The client only sees / sends bare names.
             client_topics = subscribe_msg.topics
-            await manager.connect(websocket, client_topics)
+            composite_topics = [f"{user.user_id}/{t}" for t in client_topics]
+            await manager.connect(websocket, composite_topics)
 
-            # Send subscription confirmation
             response = WebSocketSubscribed(
                 type="subscribed",
                 topics=client_topics,
@@ -265,11 +271,13 @@ async def websocket_endpoint(websocket: WebSocket):
                     # TODO: Update delivery tracking
 
                 elif data.get("type") == "unsubscribe":
-                    # Unsubscribe from topics
+                    # Unsubscribe from topics. Client sends bare names;
+                    # the manager indexes composite ``{owner_id}/{topic}``
+                    # channels (see subscribe path above).
                     unsub_msg = WebSocketUnsubscribe(**data)
-                    await manager.unsubscribe(websocket, unsub_msg.topics)
+                    composite_unsubs = [f"{user.user_id}/{t}" for t in unsub_msg.topics]
+                    await manager.unsubscribe(websocket, composite_unsubs)
 
-                    # Update client topics
                     for topic in unsub_msg.topics:
                         if topic in client_topics:
                             client_topics.remove(topic)

@@ -1,4 +1,9 @@
-"""Tests for Valkey storage backend."""
+"""Tests for Valkey storage backend.
+
+Topic storage is namespaced by ``(owner_id, topic_name)`` since Phase
+3c (closes API H#5). ValkeyStorage stream keys are
+``stream:topic:{owner_id}/{name}``.
+"""
 
 import json
 from datetime import datetime
@@ -8,6 +13,8 @@ import pytest
 from glide import ExclusiveIdBound, MaxId, MinId
 
 from pulsar_relay.storage.valkey import ValkeyStorage
+
+OWNER = "u-test"
 
 
 @pytest.fixture
@@ -35,6 +42,7 @@ class TestValkeyStorage:
         valkey_storage._client.xtrim = AsyncMock()
 
         message_id = await valkey_storage.save_message(
+            owner_id=OWNER,
             topic="test-topic",
             payload={"data": "value"},
             timestamp=datetime(2025, 1, 1, 12, 0, 0),
@@ -47,7 +55,7 @@ class TestValkeyStorage:
         # Verify xadd was called with correct parameters
         valkey_storage._client.xadd.assert_called_once()
         call_args = valkey_storage._client.xadd.call_args
-        assert call_args[0][0] == "stream:topic:test-topic"
+        assert call_args[0][0] == f"stream:topic:{OWNER}/test-topic"
         # xadd receives list of tuples: [(field, value), ...]
         fields_list = call_args[0][1]
         fields = dict(fields_list)  # Convert to dict for easy verification
@@ -66,6 +74,7 @@ class TestValkeyStorage:
         valkey_storage._client.xtrim = AsyncMock()
 
         message_id = await valkey_storage.save_message(
+            owner_id=OWNER,
             topic="test-topic",
             payload={"data": "value"},
             timestamp=datetime(2025, 1, 1, 12, 0, 0),
@@ -100,7 +109,7 @@ class TestValkeyStorage:
             }
         )
 
-        messages = await valkey_storage.get_messages("test-topic", limit=10)
+        messages = await valkey_storage.get_messages(OWNER, "test-topic", limit=10)
 
         assert len(messages) == 2
         # Stream ID is now the message ID
@@ -118,12 +127,12 @@ class TestValkeyStorage:
         """Test retrieving messages starting from a specific stream ID."""
         valkey_storage._client.xrange = AsyncMock(return_value={})
 
-        await valkey_storage.get_messages("test-topic", since="1234567890120-0", limit=10)
+        await valkey_storage.get_messages(OWNER, "test-topic", since="1234567890120-0", limit=10)
 
         # Verify xrange was called with ExclusiveIdBound
         valkey_storage._client.xrange.assert_called_once()
         call_args = valkey_storage._client.xrange.call_args
-        assert call_args[0][0] == "stream:topic:test-topic"
+        assert call_args[0][0] == f"stream:topic:{OWNER}/test-topic"
         # Check that start bound is ExclusiveIdBound type
 
         assert isinstance(call_args[1]["start"], ExclusiveIdBound)
@@ -135,12 +144,12 @@ class TestValkeyStorage:
         """Test retrieving messages from the beginning."""
         valkey_storage._client.xrange = AsyncMock(return_value={})
 
-        await valkey_storage.get_messages("test-topic", since=None, limit=5)
+        await valkey_storage.get_messages(OWNER, "test-topic", since=None, limit=5)
 
         # Verify xrange was called with MinId and MaxId
         valkey_storage._client.xrange.assert_called_once()
         call_args = valkey_storage._client.xrange.call_args
-        assert call_args[0][0] == "stream:topic:test-topic"
+        assert call_args[0][0] == f"stream:topic:{OWNER}/test-topic"
         # Check that start bound is MinId and end is MaxId
 
         assert isinstance(call_args[1]["start"], MinId)
@@ -153,7 +162,7 @@ class TestValkeyStorage:
         valkey_storage._client.xlen = AsyncMock(return_value=100)
         valkey_storage._client.xtrim = AsyncMock()
 
-        removed = await valkey_storage.trim_topic("test-topic", keep_count=50)
+        removed = await valkey_storage.trim_topic(OWNER, "test-topic", keep_count=50)
 
         assert removed == 50
         valkey_storage._client.xtrim.assert_called_once()
@@ -164,7 +173,7 @@ class TestValkeyStorage:
         valkey_storage._client.xlen = AsyncMock(return_value=30)
         valkey_storage._client.xtrim = AsyncMock()
 
-        removed = await valkey_storage.trim_topic("test-topic", keep_count=50)
+        removed = await valkey_storage.trim_topic(OWNER, "test-topic", keep_count=50)
 
         assert removed == 0
         valkey_storage._client.xtrim.assert_not_called()
@@ -174,17 +183,17 @@ class TestValkeyStorage:
         """Test getting the length of a topic."""
         valkey_storage._client.xlen = AsyncMock(return_value=42)
 
-        length = await valkey_storage.get_topic_length("test-topic")
+        length = await valkey_storage.get_topic_length(OWNER, "test-topic")
 
         assert length == 42
-        valkey_storage._client.xlen.assert_called_once_with("stream:topic:test-topic")
+        valkey_storage._client.xlen.assert_called_once_with(f"stream:topic:{OWNER}/test-topic")
 
     @pytest.mark.anyio
     async def test_get_topic_length_empty(self, valkey_storage):
         """Test getting the length of an empty topic."""
         valkey_storage._client.xlen = AsyncMock(return_value=None)
 
-        length = await valkey_storage.get_topic_length("test-topic")
+        length = await valkey_storage.get_topic_length(OWNER, "test-topic")
 
         assert length == 0
 
@@ -251,16 +260,16 @@ class TestValkeyStorage:
         storage = ValkeyStorage()
 
         with pytest.raises(RuntimeError, match="Not connected to Valkey"):
-            await storage.save_message("topic", {}, datetime.now())
+            await storage.save_message(OWNER, "topic", {}, datetime.now())
 
         with pytest.raises(RuntimeError, match="Not connected to Valkey"):
-            await storage.get_messages("topic")
+            await storage.get_messages(OWNER, "topic")
 
         with pytest.raises(RuntimeError, match="Not connected to Valkey"):
-            await storage.trim_topic("topic", 10)
+            await storage.trim_topic(OWNER, "topic", 10)
 
         with pytest.raises(RuntimeError, match="Not connected to Valkey"):
-            await storage.get_topic_length("topic")
+            await storage.get_topic_length(OWNER, "topic")
 
     @pytest.mark.anyio
     async def test_connect_disconnect(self):
@@ -283,15 +292,27 @@ class TestValkeyStorage:
 
     @pytest.mark.anyio
     async def test_stream_key_generation(self, valkey_storage):
-        """Test stream key generation for topics."""
-        key = valkey_storage._get_stream_key("my-topic")
-        assert key == "stream:topic:my-topic"
+        """Stream keys are namespaced by ``(owner_id, topic_name)`` as
+        of Phase 3c (API H#5)."""
+        key = valkey_storage._get_stream_key("alice", "my-topic")
+        assert key == "stream:topic:alice/my-topic"
 
     @pytest.mark.anyio
     async def test_metadata_key_generation(self, valkey_storage):
-        """Test metadata key generation for topics."""
-        key = valkey_storage._get_metadata_key("my-topic")
-        assert key == "meta:topic:my-topic"
+        """Metadata keys are namespaced by ``(owner_id, topic_name)``."""
+        key = valkey_storage._get_metadata_key("alice", "my-topic")
+        assert key == "meta:topic:alice/my-topic"
+
+    @pytest.mark.anyio
+    async def test_two_owners_have_independent_streams(self, valkey_storage):
+        """Stream keys for the same bare topic name under different
+        owners are distinct — the API H#5 squat is closed at the
+        storage layer."""
+        alice_key = valkey_storage._get_stream_key("alice", "jobs")
+        bob_key = valkey_storage._get_stream_key("bob", "jobs")
+        assert alice_key != bob_key
+        assert "alice" in alice_key
+        assert "bob" in bob_key
 
 
 @pytest.mark.integration
@@ -316,6 +337,7 @@ async def test_valkey_integration():
         # Test save and retrieve
         timestamp = datetime(2025, 1, 1, 12, 0, 0)
         message_id = await storage.save_message(
+            owner_id=OWNER,
             topic="integration-test",
             payload={"test": "data"},
             timestamp=timestamp,
@@ -325,13 +347,13 @@ async def test_valkey_integration():
         # message_id should be a stream ID (format: timestamp-sequence)
         assert "-" in message_id
 
-        messages = await storage.get_messages("integration-test")
+        messages = await storage.get_messages(OWNER, "integration-test")
         assert len(messages) >= 1
         assert messages[0]["message_id"] == message_id
         assert messages[0]["payload"] == {"test": "data"}
 
         # Test topic length
-        length = await storage.get_topic_length("integration-test")
+        length = await storage.get_topic_length(OWNER, "integration-test")
         assert length >= 1
 
         # Test health check
