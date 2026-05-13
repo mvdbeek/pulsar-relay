@@ -75,22 +75,35 @@ jobs:
           VERSION="${GITHUB_REF#refs/tags/client-v}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Generate changelog
+      - name: Extract release notes from CHANGELOG.md
+        # Pull the matching ``## [VERSION]`` block verbatim from the
+        # shared CHANGELOG.md at repo root. The server and client are
+        # versioned in lockstep, so the same block describes both;
+        # only the ``### Client (...)`` subsection within it is
+        # specific to this distribution. We publish the whole block
+        # so consumers see what shipped in the corresponding server
+        # release.
         run: |
-          # Last client tag (excluding this one), if any
-          PREV_TAG=$(git tag --list 'client-v*' --sort=-v:refname | sed -n '2p')
-          if [ -z "$PREV_TAG" ]; then
-            CHANGELOG=$(git log --pretty=format:"- %s (%h)" --no-merges -- client/ | head -200)
-          else
-            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges -- client/)
+          VERSION="${{ steps.extract_version.outputs.version }}"
+          awk -v ver="$VERSION" '
+            /^## \[/ {
+              if ($0 ~ "^## \\[" ver "\\]") { capture=1; next }
+              else if (capture) { exit }
+            }
+            capture { print }
+          ' CHANGELOG.md > release_body.txt
+          if [ ! -s release_body.txt ]; then
+            echo "::error::No CHANGELOG.md section found for version ${VERSION}"
+            exit 1
           fi
-          echo "$CHANGELOG" > changelog.txt
+          echo "Release notes for ${VERSION}:"
+          cat release_body.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: pulsar-relay-client ${{ steps.extract_version.outputs.version }}
-          body_path: changelog.txt
+          body_path: release_body.txt
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
         env:
