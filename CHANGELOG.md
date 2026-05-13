@@ -8,6 +8,18 @@ The `pulsar-relay` server (`pyproject.toml`) and the `pulsar-relay-client` SDK (
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-05-13
+
+### Server
+
+#### Added
+- `replay_window_seconds` field on `POST /messages/poll`. When > 0 (capped at 300), any topic in the request that lacks a `since` cursor is backfilled with messages whose `timestamp` falls within that window — capped at 100 messages per topic. Closes the publish-before-first-poll race that drops messages landing in the gap between a consumer restart and its first cursor-bearing poll. Default 0 preserves the prior subscribe-from-now wire semantic, so existing clients see no behavior change until they opt in.
+
+### Client
+
+#### Added
+- `RelayTransport.long_poll(..., replay_window_seconds=N)` forwards the new server field. Set on the *first* poll after a consumer restart (when there's no cursor yet) to recover messages published in the cold-start gap; subsequent cursor-bearing polls don't need it. Default 0 keeps the wire shape unchanged.
+
 ## [0.2.1] - 2026-05-13
 
 ### Client

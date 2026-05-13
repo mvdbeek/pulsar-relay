@@ -7,6 +7,7 @@ to the relay while a consumer was down are NOT silently skipped on resume.
 import json
 import os
 
+import responses
 from pulsar_relay_client import RelayTransport
 from pulsar_relay_client.testing import FakeAuthManager
 
@@ -90,3 +91,37 @@ def test_cursor_directory_is_created(tmp_path):
     t = _new_transport(cursor_path=cursor)
     t.set_last_message_id("setup", "msg-1")
     assert os.path.exists(cursor)
+
+
+@responses.activate
+def test_long_poll_omits_replay_window_by_default():
+    """Default ``replay_window_seconds=0`` keeps the existing wire shape —
+    no extra field on the body, so a server pinned to an older relay
+    release sees the request exactly as before."""
+    captured = {}
+
+    def _capture(request):
+        captured["body"] = json.loads(request.body)
+        return (200, {}, json.dumps({"messages": []}))
+
+    responses.add_callback(
+        responses.POST, "http://localhost:8080/messages/poll", callback=_capture, content_type="application/json"
+    )
+    _new_transport().long_poll(["setup"])
+    assert "replay_window_seconds" not in captured["body"]
+
+
+@responses.activate
+def test_long_poll_passes_replay_window_when_set():
+    """A non-zero window is forwarded verbatim."""
+    captured = {}
+
+    def _capture(request):
+        captured["body"] = json.loads(request.body)
+        return (200, {}, json.dumps({"messages": []}))
+
+    responses.add_callback(
+        responses.POST, "http://localhost:8080/messages/poll", callback=_capture, content_type="application/json"
+    )
+    _new_transport().long_poll(["setup"], replay_window_seconds=60)
+    assert captured["body"]["replay_window_seconds"] == 60

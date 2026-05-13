@@ -331,6 +331,92 @@ class TestPollingEndpoint:
         assert len(data["messages"]) >= 2
 
     @pytest.mark.anyio
+    async def test_poll_replay_window_returns_recent_message_published_before_poll(
+        self, test_storage, test_client, auth_token, auth_storage
+    ):
+        """``replay_window_seconds`` closes the publish-before-first-poll
+        race: a producer that lands a message *just before* the consumer's
+        first cursor-bearing poll is created would otherwise be lost
+        forever, because the relay's poll-waiter only sees publishes that
+        arrive *after* it's registered."""
+        user = await auth_storage.get_user_by_username("user")
+        msg_id = await test_storage.save_message(
+            user.user_id, "test-topic", {"hello": "world"}, datetime.datetime.now(datetime.timezone.utc)
+        )
+
+        response = test_client.post(
+            "/messages/poll",
+            json={
+                "topics": ["test-topic"],
+                "timeout": 1,
+                "replay_window_seconds": 60,
+            },
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["messages"]) == 1
+        assert data["messages"][0]["message_id"] == msg_id
+        assert data["messages"][0]["payload"] == {"hello": "world"}
+
+    @pytest.mark.anyio
+    async def test_poll_replay_window_skips_messages_older_than_window(
+        self, test_storage, test_client, auth_token, auth_storage
+    ):
+        """An ancient message must not resurface — the window is a
+        *recency* bound, not a "give me everything" toggle."""
+        user = await auth_storage.get_user_by_username("user")
+        old_ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=120)
+        await test_storage.save_message(user.user_id, "test-topic", {"old": True}, old_ts)
+
+        response = test_client.post(
+            "/messages/poll",
+            json={
+                "topics": ["test-topic"],
+                "timeout": 1,
+                "replay_window_seconds": 30,
+            },
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["messages"] == []
+
+    @pytest.mark.anyio
+    async def test_poll_replay_window_does_not_override_since_cursor(
+        self, test_storage, test_client, auth_token, auth_storage
+    ):
+        """If the client passes a ``since`` for a topic, the replay
+        window must defer to it for that topic — replay-on-no-cursor is
+        a fallback, not an override."""
+        user = await auth_storage.get_user_by_username("user")
+        # Two messages; client claims to have already seen the first.
+        msg_a = await test_storage.save_message(
+            user.user_id, "test-topic", {"i": 1}, datetime.datetime.now(datetime.timezone.utc)
+        )
+        msg_b = await test_storage.save_message(
+            user.user_id, "test-topic", {"i": 2}, datetime.datetime.now(datetime.timezone.utc)
+        )
+
+        response = test_client.post(
+            "/messages/poll",
+            json={
+                "topics": ["test-topic"],
+                "timeout": 1,
+                "since": {"test-topic": msg_a},
+                "replay_window_seconds": 60,
+            },
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+
+        assert response.status_code == 200
+        ids = [m["message_id"] for m in response.json()["messages"]]
+        # Only the post-cursor message; the replay window must NOT also
+        # surface msg_a (which the client explicitly said it has seen).
+        assert ids == [msg_b]
+
+    @pytest.mark.anyio
     async def test_poll_invalid_request(self, test_client, auth_token):
         """Test polling with invalid request."""
         # Empty topics list

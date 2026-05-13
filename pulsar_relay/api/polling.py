@@ -1,6 +1,7 @@
 """Long polling HTTP endpoint as WebSocket fallback."""
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -11,6 +12,12 @@ from pulsar_relay.auth.models import User
 from pulsar_relay.core.polling import PollManager, PollWaiterLimitExceededError
 from pulsar_relay.models import TopicName
 from pulsar_relay.storage.base import StorageBackend
+
+# Worst-case message count returned per replay-window topic. The window
+# is also bounded server-side by the request's
+# ``replay_window_seconds`` (capped at 300 by ``PollRequest``) so a
+# client cannot ask for unbounded historical replay.
+REPLAY_WINDOW_PER_TOPIC_LIMIT = 100
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +40,19 @@ class PollRequest(BaseModel):
         description="Maximum seconds to wait for new messages",
         ge=1,
         le=60,
+    )
+    replay_window_seconds: int = Field(
+        default=0,
+        description=(
+            "When > 0, for any requested topic that has no entry in `since`, "
+            "deliver messages whose ``timestamp`` falls within this many seconds "
+            "of the request — capped at 100 messages per topic. Closes the "
+            "publish-before-first-poll race that drops messages landing in the "
+            "window between a consumer restart and its first cursor-bearing "
+            "poll. Default 0 keeps the old subscribe-from-now semantic."
+        ),
+        ge=0,
+        le=300,
     )
 
 
@@ -123,10 +143,48 @@ async def long_poll(
                     }
                 )
 
-        # If we already have messages, return immediately
-        if messages:
-            logger.debug(f"Returning {len(messages)} cached messages immediately")
-            return PollResponse(messages=messages, has_more=len(messages) >= 100)
+    # For any topic the client did NOT pass a `since` cursor for, optionally
+    # backfill from the most recent ``replay_window_seconds`` of history.
+    # Closes the publish-before-first-poll race after a consumer restart
+    # without forcing the consumer to fetch full history (which would
+    # double-deliver previously-acked work).
+    if poll_request.replay_window_seconds > 0:
+        cutoff_iso = (
+            datetime.now(timezone.utc) - timedelta(seconds=poll_request.replay_window_seconds)
+        ).isoformat()
+        since_map = poll_request.since or {}
+        for topic in poll_request.topics:
+            if since_map.get(topic):
+                # Already covered above by the `since`-based catchup.
+                continue
+            # Newest-first; we pull at most LIMIT and then drop everything
+            # that pre-dates the window.
+            recent = await storage.get_messages(
+                owner_id=owner_id,
+                topic=topic,
+                limit=REPLAY_WINDOW_PER_TOPIC_LIMIT,
+                reverse=True,
+            )
+            in_window = [m for m in recent if m.get("timestamp", "") >= cutoff_iso]
+            # Re-order chronologically so the consumer processes events
+            # in the same order the publisher emitted them.
+            in_window.reverse()
+            for msg in in_window:
+                messages.append(
+                    {
+                        "topic": topic,
+                        "message_id": msg["message_id"],
+                        "payload": msg["payload"],
+                        "timestamp": msg["timestamp"],
+                        "metadata": msg.get("metadata", {}),
+                        "stream_id": msg.get("stream_id"),
+                    }
+                )
+
+    # If we already have messages from either path, return immediately
+    if messages:
+        logger.debug(f"Returning {len(messages)} cached messages immediately")
+        return PollResponse(messages=messages, has_more=len(messages) >= 100)
 
     # No cached messages, create waiter for new messages. Subscribe
     # under the composite ``{owner_id}/{topic}`` channel so a publish

@@ -308,6 +308,7 @@ class RelayTransport:
         self,
         topics: list[str],
         timeout: int = 30,
+        replay_window_seconds: int = 0,
     ) -> list[dict[str, Any]]:
         """Poll for messages from specified topics.
 
@@ -318,6 +319,14 @@ class RelayTransport:
         Args:
             topics: List of topic names to subscribe to
             timeout: Maximum seconds to wait for messages (1-60)
+            replay_window_seconds: When > 0, the server backfills any topic
+                that doesn't yet have a tracked ``since`` cursor with
+                messages from the last N seconds (capped at 100 per topic
+                server-side). Set this on the *first* poll after a
+                consumer restart to avoid losing messages published in
+                the gap before the first cursor-bearing poll lands. The
+                default (0) preserves the prior subscribe-from-now wire
+                semantic.
 
         Returns:
             List of message dictionaries
@@ -328,6 +337,8 @@ class RelayTransport:
         url = f"{self.relay_url}/messages/poll"
 
         poll_data: dict[str, Any] = {"topics": topics, "timeout": min(max(timeout, 1), 60)}  # Clamp to 1-60 range
+        if replay_window_seconds > 0:
+            poll_data["replay_window_seconds"] = replay_window_seconds
 
         # Build since dict from tracked message IDs for requested topics
         tracked_since: dict[str, str] = {}
