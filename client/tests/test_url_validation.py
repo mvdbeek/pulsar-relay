@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 from pulsar_relay_client import HttpRelayClient, RelayAuthManager, RelayURLError
-from pulsar_relay_client._url import normalize_relay_url, quote_topic
+from pulsar_relay_client._url import INSECURE_BYPASS_ENV_VAR, normalize_relay_url, quote_topic
 
 
 def test_normalize_strips_trailing_slash() -> None:
@@ -49,6 +49,31 @@ def test_normalize_rejects_query_and_fragment() -> None:
 def test_normalize_rejects_unknown_scheme() -> None:
     with pytest.raises(RelayURLError, match="http://"):
         normalize_relay_url("ftp://relay.example.org")
+
+
+def test_normalize_allows_http_to_remote_when_env_bypass_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``PULSAR_RELAY_ALLOW_INSECURE=1`` lets test harnesses route the
+    relay base URL through a non-TLS proxy (e.g. toxiproxy) without
+    needing to terminate TLS in the harness."""
+    monkeypatch.setenv(INSECURE_BYPASS_ENV_VAR, "1")
+    assert normalize_relay_url("http://toxiproxy:9000") == "http://toxiproxy:9000"
+
+
+def test_normalize_env_bypass_only_accepts_exact_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Truthy-ish but not-``1`` values must NOT enable the bypass —
+    operators set ``=1`` deliberately; ``=true`` / ``=yes`` are user
+    error and we'd rather fail closed than honour them."""
+    for value in ("0", "true", "yes", "True", ""):
+        monkeypatch.setenv(INSECURE_BYPASS_ENV_VAR, value)
+        with pytest.raises(RelayURLError, match="plaintext"):
+            normalize_relay_url("http://relay.example.org")
+
+
+def test_normalize_rejects_http_localhost_when_disallowed() -> None:
+    """``allow_insecure_localhost=False`` is a wired-but-previously-dead
+    knob; cover it now that the localhost case is checked."""
+    with pytest.raises(RelayURLError, match="allow_insecure_localhost"):
+        normalize_relay_url("http://localhost:8080", allow_insecure_localhost=False)
 
 
 def test_http_relay_client_validates_relay_url() -> None:

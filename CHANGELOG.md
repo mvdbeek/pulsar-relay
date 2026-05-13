@@ -8,6 +8,16 @@ The `pulsar-relay` server (`pyproject.toml`) and the `pulsar-relay-client` SDK (
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-13
+
+### Client
+
+#### Fixed
+- `normalize_relay_url` second clause was dead code — `allow_insecure_localhost` had no observable effect because the surrounding guard already restricted to non-localhost hosts. The flag now actually gates the localhost case as documented (defaulting to allow, so existing callers are unaffected).
+
+#### Added
+- `PULSAR_RELAY_ALLOW_INSECURE=1` environment variable disables the plaintext-to-non-localhost rejection in `normalize_relay_url`. Intended for test harnesses (e.g. fault injection through a non-TLS proxy) where the operator has explicitly opted in to insecure transport; never enable in production. Only the exact value `1` is honoured — truthy-looking values like `true` / `yes` fail closed.
+
 ## [0.2.0] - 2026-05-13
 
 First coordinated release of the server and the sibling client distribution. The bulk of the work is the security review fallout shipped in PR #5 (security-hardening). The server is **not backwards-compatible** with `0.1.0` consumers — see *Breaking* below — and the client gets its first PyPI publish.
