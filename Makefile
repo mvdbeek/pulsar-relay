@@ -153,9 +153,20 @@ release-tag-server:
 	fi; \
 	git tag -a "v$(VERSION)" -m "Release v$(VERSION) (server)"; \
 	git push origin "v$(VERSION)"
-	@echo "==> Tag v$(VERSION) pushed — tailing release.yml run"
-	@gh run watch --exit-status "$$(gh run list --workflow=release.yml --limit 1 --json databaseId -q '.[0].databaseId')" || \
-		(echo "release.yml failed — investigate with 'gh run view --log-failed'" >&2; exit 1)
+	@echo "==> Tag v$(VERSION) pushed — waiting for release.yml run to register"
+	@# Poll until the new run (keyed on the tag's headBranch) shows up
+	@# in the API. ``gh run list --limit 1`` immediately after a push
+	@# can return the previous run (queued ones aren't indexed yet).
+	@set -e; \
+	for _ in 1 2 3 4 5 6 7 8 9 10; do \
+		run_id=$$(gh run list --workflow=release.yml --branch "v$(VERSION)" --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null); \
+		if [ -n "$$run_id" ]; then break; fi; \
+		sleep 3; \
+	done; \
+	if [ -z "$$run_id" ]; then echo "ERROR: could not find release.yml run for v$(VERSION)" >&2; exit 1; fi; \
+	echo "==> tailing run $$run_id"; \
+	gh run watch --exit-status "$$run_id" || \
+		(echo "release.yml failed — investigate with 'gh run view --log-failed $$run_id'" >&2; exit 1)
 
 # 6b. Tag the client release. Same shape; fires release-client.yml.
 release-tag-client:
@@ -174,9 +185,17 @@ release-tag-client:
 	fi; \
 	git tag -a "client-v$(VERSION)" -m "Release client-v$(VERSION)"; \
 	git push origin "client-v$(VERSION)"
-	@echo "==> Tag client-v$(VERSION) pushed — tailing release-client.yml run"
-	@gh run watch --exit-status "$$(gh run list --workflow=release-client.yml --limit 1 --json databaseId -q '.[0].databaseId')" || \
-		(echo "release-client.yml failed — investigate with 'gh run view --log-failed'" >&2; exit 1)
+	@echo "==> Tag client-v$(VERSION) pushed — waiting for release-client.yml run to register"
+	@set -e; \
+	for _ in 1 2 3 4 5 6 7 8 9 10; do \
+		run_id=$$(gh run list --workflow=release-client.yml --branch "client-v$(VERSION)" --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null); \
+		if [ -n "$$run_id" ]; then break; fi; \
+		sleep 3; \
+	done; \
+	if [ -z "$$run_id" ]; then echo "ERROR: could not find release-client.yml run for client-v$(VERSION)" >&2; exit 1; fi; \
+	echo "==> tailing run $$run_id"; \
+	gh run watch --exit-status "$$run_id" || \
+		(echo "release-client.yml failed — investigate with 'gh run view --log-failed $$run_id'" >&2; exit 1)
 
 # 7. Post-release verification. Checks both PyPI versions, the
 #    ghcr.io image, and both GitHub Release pages. Idempotent /
@@ -191,9 +210,15 @@ release-verify:
 	curl -sf "https://pypi.org/pypi/pulsar-relay-client/$(VERSION)/json" | jq -r '.info.version' \
 		|| { echo "ERROR: pulsar-relay-client $(VERSION) not found on PyPI" >&2; exit 1; }; \
 	echo "==> ghcr.io image"; \
-	docker manifest inspect "ghcr.io/mvdbeek/pulsar-relay:$(VERSION)" >/dev/null \
-		|| { echo "ERROR: ghcr.io/mvdbeek/pulsar-relay:$(VERSION) not pushed" >&2; exit 1; }; \
-	echo "  manifest present"; \
+	ghcr_token=$$(curl -sf "https://ghcr.io/token?scope=repository:mvdbeek/pulsar-relay:pull" | jq -r '.token'); \
+	manifest_status=$$(curl -sf -o /dev/null -w '%{http_code}' \
+		-H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" \
+		-H "Authorization: Bearer $$ghcr_token" \
+		"https://ghcr.io/v2/mvdbeek/pulsar-relay/manifests/$(VERSION)" || echo 000); \
+	if [ "$$manifest_status" != "200" ]; then \
+		echo "ERROR: ghcr.io/mvdbeek/pulsar-relay:$(VERSION) returned HTTP $$manifest_status" >&2; exit 1; \
+	fi; \
+	echo "  manifest present (HTTP 200)"; \
 	echo "==> GitHub Release v$(VERSION)"; \
 	gh release view "v$(VERSION)" --json name -q '.name'; \
 	echo "==> GitHub Release client-v$(VERSION)"; \
