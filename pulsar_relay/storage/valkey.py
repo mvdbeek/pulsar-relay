@@ -74,8 +74,16 @@ class ValkeyStorage(StorageBackend):
         try:
             credentials: Optional[ServerCredentials] = None
             if self.password is not None:
+                # Valkey 9 rejects ``HELLO ... AUTH "" <pw>`` (which is
+                # what ``glide_shared`` emits when ``username`` is falsy)
+                # with WRONGPASS, even though ``redis-cli -a`` (legacy
+                # ``AUTH <pw>``) works against the same instance. When
+                # the operator has only configured a password (legacy
+                # ``--requirepass`` mode), pin the username to
+                # ``"default"`` — the implicit ACL user that
+                # ``--requirepass`` configures.
                 credentials = ServerCredentials(
-                    username=self.username,
+                    username=self.username or "default",
                     password=self.password,
                 )
             config = GlideClientConfiguration(

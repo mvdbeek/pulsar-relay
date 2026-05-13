@@ -11,11 +11,23 @@ import os
 from datetime import datetime, timezone
 
 import pytest
-from glide import GlideClient, GlideClientConfiguration, NodeAddress
+from glide import GlideClient, GlideClientConfiguration, NodeAddress, ServerCredentials
 
 from pulsar_relay.auth.models import User, UserCreate
 from pulsar_relay.auth.storage import ValkeyUserStorage
-from tests._storage_helpers import reset_valkey_client
+from tests._storage_helpers import reset_valkey_client, valkey_test_credentials
+
+
+def _glide_test_config() -> GlideClientConfiguration:
+    username, password = valkey_test_credentials()
+    credentials = ServerCredentials(username=username, password=password) if password else None
+    return GlideClientConfiguration(
+        addresses=[NodeAddress(host="localhost", port=6379)],
+        use_tls=False,
+        request_timeout=5000,
+        credentials=credentials,
+    )
+
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("VALKEY_INTEGRATION_TEST"), reason="VALKEY_INTEGRATION_TEST environment variable not set"
@@ -25,12 +37,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture
 async def valkey_client():
     """Create a connected Valkey client."""
-    config = GlideClientConfiguration(
-        addresses=[NodeAddress(host="localhost", port=6379)],
-        use_tls=False,
-        request_timeout=5000,
-    )
-    client = await GlideClient.create(config)
+    client = await GlideClient.create(_glide_test_config())
     yield client
     await client.close()
 
@@ -476,12 +483,7 @@ class TestValkeyUserStorageIntegrationStats:
 async def test_full_workflow():
     """Test a complete workflow: connect, create, read, update, delete."""
     # Create client
-    config = GlideClientConfiguration(
-        addresses=[NodeAddress(host="localhost", port=6379)],
-        use_tls=False,
-        request_timeout=5000,
-    )
-    client = await GlideClient.create(config)
+    client = await GlideClient.create(_glide_test_config())
 
     try:
         # Clear any existing data

@@ -323,9 +323,16 @@ async def test_valkey_integration():
     This test requires a running Valkey instance on localhost:6379.
     Skip if Valkey is not available.
     """
-    from tests._storage_helpers import reset_valkey_storage
+    from tests._storage_helpers import reset_valkey_storage, valkey_test_credentials
 
-    storage = ValkeyStorage(host="localhost", port=6379, max_messages_per_topic=100)
+    username, password = valkey_test_credentials()
+    storage = ValkeyStorage(
+        host="localhost",
+        port=6379,
+        max_messages_per_topic=100,
+        username=username,
+        password=password,
+    )
 
     try:
         # Try to connect

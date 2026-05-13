@@ -17,7 +17,7 @@ from pulsar_relay.auth.jwt import create_access_token
 from pulsar_relay.auth.topic_storage import InMemoryTopicStorage
 from pulsar_relay.main import app
 from pulsar_relay.storage.valkey import ValkeyStorage
-from tests._storage_helpers import reset_valkey_storage
+from tests._storage_helpers import reset_valkey_storage, valkey_test_credentials
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("VALKEY_INTEGRATION_TEST"), reason="VALKEY_INTEGRATION_TEST environment variable not set"
@@ -27,10 +27,13 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture
 async def valkey_storage():
     """Create a ValkeyStorage instance and connect to real Valkey."""
+    username, password = valkey_test_credentials()
     storage = ValkeyStorage(
         host="localhost",
         port=6379,
         max_messages_per_topic=1000,
+        username=username,
+        password=password,
     )
 
     try:

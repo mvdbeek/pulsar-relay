@@ -10,13 +10,38 @@ Use :func:`reset_valkey_storage` from fixture setup/teardown when a test
 needs a clean Valkey DB; use :func:`reset_valkey_client` when a test holds
 its own bare :class:`glide.GlideClient` rather than going through
 ``ValkeyStorage``.
+
+:func:`valkey_test_credentials` reads ``PULSAR_VALKEY_PASSWORD`` (set by
+``tests/conftest.py`` or CI) so integration fixtures can authenticate
+against a hardened (``--requirepass``-protected) Valkey instance.
 """
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from pulsar_relay.storage.valkey import ValkeyStorage
+
+
+def valkey_test_credentials() -> tuple[str | None, str | None]:
+    """Return ``(username, password)`` from the test environment.
+
+    When ``PULSAR_VALKEY_PASSWORD`` is set, username defaults to
+    ``"default"`` (the implicit user that ``valkey-server --requirepass``
+    configures). ``glide_shared`` only writes a non-empty username into
+    the connection protobuf, so leaving it ``None`` makes the Rust core
+    send ``HELLO ... AUTH "" <pw>`` — which Valkey 9 rejects with
+    ``WRONGPASS`` even though ``redis-cli -a`` (legacy ``AUTH <pw>``)
+    succeeds against the same instance. Setting it explicitly avoids
+    that asymmetry.
+
+    Password is ``None`` only if the env var is unset, which happens
+    when running the suite against an unauthenticated Valkey.
+    """
+    password = os.environ.get("PULSAR_VALKEY_PASSWORD")
+    username = os.environ.get("PULSAR_VALKEY_USERNAME") or ("default" if password else None)
+    return username, password
 
 
 async def reset_valkey_storage(storage: ValkeyStorage) -> None:

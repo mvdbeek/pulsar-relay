@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from pulsar_relay.storage.valkey import ValkeyStorage
-from tests._storage_helpers import reset_valkey_storage
+from tests._storage_helpers import reset_valkey_storage, valkey_test_credentials
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("VALKEY_INTEGRATION_TEST"), reason="VALKEY_INTEGRATION_TEST environment variable not set"
@@ -28,10 +28,13 @@ OWNER = "u-integ"
 @pytest.fixture
 async def valkey_storage():
     """Create a ValkeyStorage instance and connect to real Valkey."""
+    username, password = valkey_test_credentials()
     storage = ValkeyStorage(
         host="localhost",
         port=6379,
         max_messages_per_topic=100,
+        username=username,
+        password=password,
     )
 
     try:
@@ -54,7 +57,8 @@ class TestValkeyIntegrationBasics:
     @pytest.mark.anyio
     async def test_connection_and_disconnection(self):
         """Test connecting and disconnecting from Valkey."""
-        storage = ValkeyStorage(host="localhost", port=6379)
+        username, password = valkey_test_credentials()
+        storage = ValkeyStorage(host="localhost", port=6379, username=username, password=password)
 
         # Test connection
         await storage.connect()
@@ -502,7 +506,14 @@ async def test_connection_failure_handling():
 @pytest.mark.anyio
 async def test_full_workflow():
     """Test a complete workflow: connect, write, read, trim, disconnect."""
-    storage = ValkeyStorage(host="localhost", port=6379, max_messages_per_topic=50)
+    username, password = valkey_test_credentials()
+    storage = ValkeyStorage(
+        host="localhost",
+        port=6379,
+        max_messages_per_topic=50,
+        username=username,
+        password=password,
+    )
 
     try:
         # Connect
