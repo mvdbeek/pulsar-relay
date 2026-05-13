@@ -4,22 +4,45 @@
 # idempotent where possible and abort early when their preconditions
 # fail, so they can be re-run after fixing whatever broke.
 #
-# Full procedure:
-#     make release-preflight
-#     make release-bump      VERSION=0.2.0
-#     make release-changelog VERSION=0.2.0
-#     # (edit CHANGELOG.md to flesh out the stubbed section)
-#     make release-pr        VERSION=0.2.0
-#     # (review, wait for CI, squash-merge to main)
-#     make release-tag-server VERSION=0.2.0
-#     make release-tag-client VERSION=0.2.0
-#     make release-verify    VERSION=0.2.0
-#     make release-post      VERSION=0.2.0
+# Two release shapes are supported:
+#
+# A) LOCKSTEP — server + client ship together, same version.
+#       make release-preflight
+#       make release-bump      VERSION=0.3.0
+#       make release-changelog VERSION=0.3.0
+#       # (edit CHANGELOG.md to flesh out ### Server / ### Client)
+#       make release-pr        VERSION=0.3.0
+#       # (review, wait for CI, squash-merge to main)
+#       make release-tag-server VERSION=0.3.0
+#       make release-tag-client VERSION=0.3.0
+#       make release-verify    VERSION=0.3.0
+#       make release-post      VERSION=0.3.0
+#
+# B) COMPONENT-ONLY — only one package has changes, the other stays
+#    where it is. Pick the matching ``-server`` / ``-client`` variant
+#    at every step. Example, client-only bugfix release:
+#       make release-preflight
+#       make release-bump-client      VERSION=0.2.1
+#       make release-changelog-client VERSION=0.2.1
+#       make release-pr               VERSION=0.2.1
+#       # (merge)
+#       make release-tag-client       VERSION=0.2.1
+#       make release-verify-client    VERSION=0.2.1
+#       make release-post             VERSION=0.2.1
+#    Server-only releases use the ``-server`` variants. Versions for
+#    the two packages diverge whenever a component-only release ships;
+#    that's intentional — see .claude/skills/cut-release/SKILL.md.
 #
 # See .claude/skills/cut-release/SKILL.md for the human-in-the-loop
 # checkpoints between phases.
 
-.PHONY: release-preflight release-bump release-changelog release-pr release-tag-server release-tag-client release-verify release-post
+.PHONY: release-preflight \
+        release-bump release-bump-server release-bump-client \
+        release-changelog release-changelog-server release-changelog-client \
+        release-pr \
+        release-tag-server release-tag-client \
+        release-verify release-verify-server release-verify-client \
+        release-post
 
 # --- helpers ---------------------------------------------------------
 
@@ -64,25 +87,53 @@ release-preflight:
 	fi
 	@echo "==> Pre-flight ok"
 
-# 2. Bump the version in pyproject.toml + client/pyproject.toml in
-#    lockstep. Both packages release on the same VERSION; review the
-#    diff before committing.
-release-bump:
+# 2a. Bump just the server pyproject. Use for server-only releases.
+release-bump-server:
 	$(call require_version)
-	@echo "==> Bumping pyproject.toml + client/pyproject.toml to $(VERSION)"
-	@if ! grep -q '^version = ' pyproject.toml || ! grep -q '^version = ' client/pyproject.toml; then \
-		echo "ERROR: 'version = ' line not found in one of the pyprojects" >&2; exit 1; \
+	@echo "==> Bumping pyproject.toml to $(VERSION)"
+	@if ! grep -q '^version = ' pyproject.toml; then \
+		echo "ERROR: 'version = ' line not found in pyproject.toml" >&2; exit 1; \
 	fi
-	@perl -i -pe 's/^version = ".*"$$/version = "$(VERSION)"/' pyproject.toml client/pyproject.toml
+	@perl -i -pe 's/^version = ".*"$$/version = "$(VERSION)"/' pyproject.toml
 	@echo "  server pyproject.toml: $$(grep '^version = ' pyproject.toml)"
-	@echo "  client pyproject.toml: $$(grep '^version = ' client/pyproject.toml)"
 
-# 3. Insert an empty ``## [$(VERSION)] - YYYY-MM-DD`` stub above the
-#    most recent version in CHANGELOG.md. The caller fills in the
-#    ``### Server`` and ``### Client`` subsections by hand before
-#    opening the release-prep PR. Re-running is safe — it detects an
-#    existing section and exits with a message instead of duplicating.
-release-changelog:
+# 2b. Bump just the client pyproject. Use for client-only releases.
+#     Also syncs ``__version__`` in client/pulsar_relay_client/__init__.py
+#     so ``pulsar_relay_client.__version__`` matches pyproject.toml.
+release-bump-client:
+	$(call require_version)
+	@echo "==> Bumping client/pyproject.toml + __version__ to $(VERSION)"
+	@if ! grep -q '^version = ' client/pyproject.toml; then \
+		echo "ERROR: 'version = ' line not found in client/pyproject.toml" >&2; exit 1; \
+	fi
+	@if ! grep -q '^__version__ = ' client/pulsar_relay_client/__init__.py; then \
+		echo "ERROR: '__version__ = ' line not found in client/pulsar_relay_client/__init__.py" >&2; exit 1; \
+	fi
+	@perl -i -pe 's/^version = ".*"$$/version = "$(VERSION)"/' client/pyproject.toml
+	@perl -i -pe 's/^__version__ = ".*"$$/__version__ = "$(VERSION)"/' client/pulsar_relay_client/__init__.py
+	@echo "  client pyproject.toml: $$(grep '^version = ' client/pyproject.toml)"
+	@echo "  client __version__:    $$(grep '^__version__ = ' client/pulsar_relay_client/__init__.py)"
+
+# 2. Bump BOTH pyprojects (lockstep release). Use only when both
+#    packages have changes — for component-only releases run the
+#    matching -server or -client variant.
+release-bump: release-bump-server release-bump-client
+
+# 3a. Insert a ``## [VERSION]`` stub with both subsections (lockstep).
+release-changelog: COMPONENT=both
+release-changelog: _release-changelog
+
+# 3b. Stub with only ``### Server`` (server-only release).
+release-changelog-server: COMPONENT=server
+release-changelog-server: _release-changelog
+
+# 3c. Stub with only ``### Client`` (client-only release).
+release-changelog-client: COMPONENT=client
+release-changelog-client: _release-changelog
+
+# Shared body; COMPONENT decides which subsection headings the stub
+# carries. Re-running on an already-present section is a no-op.
+_release-changelog:
 	$(call require_version)
 	@set -e; \
 	if [ ! -f CHANGELOG.md ]; then \
@@ -93,7 +144,11 @@ release-changelog:
 	fi; \
 	today=$$(date -u +%Y-%m-%d); \
 	tmp=$$(mktemp); \
-	printf '## [%s] - %s\n\n### Server\n\n### Client (`pulsar-relay-client`)\n\n' "$(VERSION)" "$$today" > "$$tmp.stub"; \
+	case "$(COMPONENT)" in \
+		server) printf '## [%s] - %s\n\n### Server\n\n' "$(VERSION)" "$$today" > "$$tmp.stub" ;; \
+		client) printf '## [%s] - %s\n\n### Client (`pulsar-relay-client`)\n\n' "$(VERSION)" "$$today" > "$$tmp.stub" ;; \
+		both|*) printf '## [%s] - %s\n\n### Server\n\n### Client (`pulsar-relay-client`)\n\n' "$(VERSION)" "$$today" > "$$tmp.stub" ;; \
+	esac; \
 	awk -v stubfile="$$tmp.stub" ' \
 		function flush_stub() { while ((getline l < stubfile) > 0) print l; close(stubfile); inserted=1 } \
 		BEGIN { inserted=0 } \
@@ -102,7 +157,7 @@ release-changelog:
 		{ print } \
 	' CHANGELOG.md > "$$tmp" && mv "$$tmp" CHANGELOG.md; \
 	rm -f "$$tmp.stub"; \
-	echo "==> Stubbed [$(VERSION)] section in CHANGELOG.md — fill in ### Server / ### Client now"
+	echo "==> Stubbed [$(VERSION)] section in CHANGELOG.md ($(COMPONENT)) — fill it in now"
 
 # 5. Open the release-prep PR. Assumes the working tree already
 #    contains the version bumps + curated CHANGELOG.md + any
@@ -116,7 +171,7 @@ release-pr:
 	if [ "$$branch" != "release/$(VERSION)" ]; then \
 		echo "ERROR: must be on release/$(VERSION) (current: $$branch)" >&2; exit 1; \
 	fi; \
-	if [ -z "$$(git status --porcelain)" ] && git diff --quiet HEAD~0..HEAD -- pyproject.toml 2>/dev/null; then \
+	if [ -z "$$(git status --porcelain)" ] && git diff --quiet HEAD~0..HEAD -- pyproject.toml client/pyproject.toml 2>/dev/null; then \
 		echo "ERROR: nothing to commit — did release-bump run?" >&2; exit 1; \
 	fi; \
 	git add -A; \
@@ -124,7 +179,7 @@ release-pr:
 	git push -u origin "release/$(VERSION)"; \
 	gh pr create --base main --head "release/$(VERSION)" \
 		--title "Release $(VERSION)" \
-		--body "Cuts pulsar-relay $(VERSION) (server + client in lockstep). See CHANGELOG.md for the curated release notes."
+		--body "Cuts pulsar-relay $(VERSION). See CHANGELOG.md for the curated release notes."
 	@echo "==> PR opened — wait for CI to go green, then squash-merge to main"
 
 # 6a. Tag the server release. Run AFTER the release-prep PR is
@@ -143,7 +198,10 @@ release-tag-server:
 	fi; \
 	pkg_version=$$(grep '^version = ' pyproject.toml | cut -d'"' -f2); \
 	if [ "$$pkg_version" != "$(VERSION)" ]; then \
-		echo "ERROR: pyproject.toml version is $$pkg_version, not $(VERSION) — release-prep PR not merged?" >&2; exit 1; \
+		echo "ERROR: pyproject.toml version is $$pkg_version, not $(VERSION)." >&2; \
+		echo "       For a client-only release, run 'make release-tag-client VERSION=$(VERSION)' instead." >&2; \
+		echo "       For a server release, ensure the release-prep PR is merged first." >&2; \
+		exit 1; \
 	fi; \
 	if ! grep -q "^## \[$(VERSION)\]" CHANGELOG.md; then \
 		echo "ERROR: CHANGELOG.md has no [$(VERSION)] section" >&2; exit 1; \
@@ -178,7 +236,10 @@ release-tag-client:
 	fi; \
 	pkg_version=$$(grep '^version = ' client/pyproject.toml | cut -d'"' -f2); \
 	if [ "$$pkg_version" != "$(VERSION)" ]; then \
-		echo "ERROR: client/pyproject.toml version is $$pkg_version, not $(VERSION)" >&2; exit 1; \
+		echo "ERROR: client/pyproject.toml version is $$pkg_version, not $(VERSION)." >&2; \
+		echo "       For a server-only release, run 'make release-tag-server VERSION=$(VERSION)' instead." >&2; \
+		echo "       For a client release, ensure the release-prep PR is merged first." >&2; \
+		exit 1; \
 	fi; \
 	if git rev-parse "client-v$(VERSION)" >/dev/null 2>&1; then \
 		echo "ERROR: tag client-v$(VERSION) already exists" >&2; exit 1; \
@@ -197,18 +258,14 @@ release-tag-client:
 	gh run watch --exit-status "$$run_id" || \
 		(echo "release-client.yml failed — investigate with 'gh run view --log-failed $$run_id'" >&2; exit 1)
 
-# 7. Post-release verification. Checks both PyPI versions, the
-#    ghcr.io image, and both GitHub Release pages. Idempotent /
-#    read-only — safe to re-run.
-release-verify:
+# 7a. Verify the server release: PyPI artifact, ghcr.io image, GH
+#     release. Idempotent / read-only.
+release-verify-server:
 	$(call require_version)
 	@set -e; \
 	echo "==> PyPI: pulsar-relay"; \
 	curl -sf "https://pypi.org/pypi/pulsar-relay/$(VERSION)/json" | jq -r '.info.version' \
 		|| { echo "ERROR: pulsar-relay $(VERSION) not found on PyPI" >&2; exit 1; }; \
-	echo "==> PyPI: pulsar-relay-client"; \
-	curl -sf "https://pypi.org/pypi/pulsar-relay-client/$(VERSION)/json" | jq -r '.info.version' \
-		|| { echo "ERROR: pulsar-relay-client $(VERSION) not found on PyPI" >&2; exit 1; }; \
 	echo "==> ghcr.io image"; \
 	ghcr_token=$$(curl -sf "https://ghcr.io/token?scope=repository:mvdbeek/pulsar-relay:pull" | jq -r '.token'); \
 	manifest_status=$$(curl -sf -o /dev/null -w '%{http_code}' \
@@ -220,9 +277,23 @@ release-verify:
 	fi; \
 	echo "  manifest present (HTTP 200)"; \
 	echo "==> GitHub Release v$(VERSION)"; \
-	gh release view "v$(VERSION)" --json name -q '.name'; \
+	gh release view "v$(VERSION)" --json name -q '.name'
+	@echo "==> Server $(VERSION) verified"
+
+# 7b. Verify the client release: PyPI artifact + GH release.
+release-verify-client:
+	$(call require_version)
+	@set -e; \
+	echo "==> PyPI: pulsar-relay-client"; \
+	curl -sf "https://pypi.org/pypi/pulsar-relay-client/$(VERSION)/json" | jq -r '.info.version' \
+		|| { echo "ERROR: pulsar-relay-client $(VERSION) not found on PyPI" >&2; exit 1; }; \
 	echo "==> GitHub Release client-v$(VERSION)"; \
 	gh release view "client-v$(VERSION)" --json name -q '.name'
+	@echo "==> Client $(VERSION) verified"
+
+# 7. Verify both halves of a lockstep release. For component-only
+#    releases call the matching ``-server`` / ``-client`` variant.
+release-verify: release-verify-server release-verify-client
 	@echo "==> Release $(VERSION) verified"
 
 # 8. Re-add the ``## [Unreleased]`` placeholder above [VERSION] so the
