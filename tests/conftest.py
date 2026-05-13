@@ -10,9 +10,10 @@ import subprocess
 # config module calls ``load_settings()`` at import time and the lifespan's
 # ``validate_startup_secrets`` enforces them. We pass real (random) values
 # rather than enabling PULSAR_ALLOW_INSECURE_DEFAULTS so the test suite
-# exercises the same code path as production — unless CI has explicitly
-# enabled the escape hatch (its Valkey service container cannot trivially
-# be made to require a password, see .github/workflows/ci.yml).
+# exercises the same code path as production. CI sets a fixed
+# PULSAR_VALKEY_PASSWORD that matches the ``--requirepass`` flag on
+# the runner Valkey (see .github/workflows/ci.yml); the ``setdefault``
+# is a no-op there.
 os.environ.setdefault("PULSAR_JWT_SECRET_KEY", secrets.token_urlsafe(32))
 os.environ.setdefault("PULSAR_BOOTSTRAP_ADMIN_PASSWORD", secrets.token_urlsafe(16))
 if os.environ.get("PULSAR_ALLOW_INSECURE_DEFAULTS") != "1":
