@@ -117,30 +117,34 @@ jobs:
           VERSION=${GITHUB_REF#refs/tags/v}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Generate changelog
-        id: changelog
+      - name: Extract release notes from CHANGELOG.md
+        # Pull the matching ``## [VERSION]`` block verbatim — the
+        # release-prep PR is responsible for curating its contents
+        # (see .claude/skills/cut-release/SKILL.md). Fails the
+        # workflow if the section is missing so a forgotten CHANGELOG
+        # update doesn't ship as an empty release body.
         run: |
-          # Get the previous tag
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-
-          if [ -z "$PREV_TAG" ]; then
-            # First release - get all commits
-            CHANGELOG=$(git log --pretty=format:"- %s (%h)" --no-merges)
-          else
-            # Get commits since previous tag
-            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          VERSION="${{ steps.extract_version.outputs.version }}"
+          awk -v ver="$VERSION" '
+            /^## \[/ {
+              if ($0 ~ "^## \\[" ver "\\]") { capture=1; next }
+              else if (capture) { exit }
+            }
+            capture { print }
+          ' CHANGELOG.md > release_body.txt
+          if [ ! -s release_body.txt ]; then
+            echo "::error::No CHANGELOG.md section found for version ${VERSION}"
+            exit 1
           fi
-
-          # Save to file to preserve newlines
-          echo "$CHANGELOG" > changelog.txt
+          echo "Release notes for ${VERSION}:"
+          cat release_body.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: Release ${{ steps.extract_version.outputs.version }}
-          body_path: changelog.txt
+          body_path: release_body.txt
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
-          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

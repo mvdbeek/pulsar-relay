@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pulsar-relay"
-version = "0.1.0"
+version = "0.2.0"
 description = "High-performance message relay system for real-time message delivery via WebSocket and long-polling"
 readme = "README.md"
 requires-python = ">=3.10"

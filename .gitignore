@@ -91,7 +91,10 @@ cython_debug/
 # Local development
 .pytest_cache/
 .ruff_cache/
-.claude/
+# Local Claude Code state (settings, history, agents, sessions, etc.) —
+# but commit project-level skills so contributors share them.
+.claude/*
+!.claude/skills/
 
 # Documentation builds
 docs/_build/
