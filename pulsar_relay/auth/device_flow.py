@@ -267,9 +267,15 @@ class ValkeyDeviceCodeStorage(DeviceCodeStorage):
 
     async def _store(self, record: DeviceCode) -> None:
         key = self._record_key(record.device_code_hash)
-        await self._client.hset(key, self._serialize(record))
         ttl_seconds = max(int((record.expires_at - _utcnow()).total_seconds()) + 60, 60)
-        await self._client.expire(key, ttl_seconds)
+        # MULTI/EXEC so a crash between HSET and EXPIRE can't leak a
+        # non-expiring device-flow record.
+        from glide import Batch
+
+        batch = Batch(is_atomic=True)
+        batch.hset(key, self._serialize(record))
+        batch.expire(key, ttl_seconds)
+        await self._client.exec(batch, raise_on_error=True)
 
     async def create(
         self,
@@ -285,25 +291,27 @@ class ValkeyDeviceCodeStorage(DeviceCodeStorage):
         # collision-avoidance loop (it only checks local state, which is fine
         # for a 35-bit code).
         device_code = generate_device_code()
+        ttl_seconds = max(int(ttl.total_seconds()) + 60, 60)
+        # SET ... NX EX guarantees the user_code is unique AND that
+        # the key carries a TTL from the moment it is created. The
+        # previous code did EXPIRE in a separate call which could
+        # leak a non-expiring user_code key on a process crash
+        # between the two calls.
+        from glide import ConditionalChange, ExpirySet, ExpiryType
+
         for _ in range(10):
             user_code = generate_user_code()
             uc_key = self._user_code_key(user_code)
-            # SET NX guarantees the user_code is unique.
-            try:
-                claimed = await self._client.set(
-                    uc_key,
-                    _hash_device_code(device_code),
-                    conditional_set="only_if_does_not_exist",
-                )
-            except TypeError:  # client signature differences
-                claimed = await self._client.set(uc_key, _hash_device_code(device_code))
+            claimed = await self._client.set(
+                uc_key,
+                _hash_device_code(device_code),
+                conditional_set=ConditionalChange.ONLY_IF_DOES_NOT_EXIST,
+                expiry=ExpirySet(ExpiryType.SEC, ttl_seconds),
+            )
             if claimed:
                 break
         else:  # pragma: no cover
             raise RuntimeError("could not allocate unique user_code")
-
-        ttl_seconds = max(int(ttl.total_seconds()) + 60, 60)
-        await self._client.expire(uc_key, ttl_seconds)
 
         now = _utcnow()
         record = DeviceCode(

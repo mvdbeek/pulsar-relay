@@ -53,6 +53,52 @@ def test_credentials_file_load_returns_none_on_corrupt_json(tmp_path):
     assert cred.load() is None
 
 
+def test_credentials_file_load_refuses_symlink(tmp_path):
+    """O_NOFOLLOW: loading via a symlink must NOT dereference. Closes
+    Storage H#5 / Client H#5 — an attacker who can write into the
+    parent dir could plant a symlink at the credentials path pointing
+    at any file readable by the relay user."""
+    real = tmp_path / "real_secret.json"
+    real.write_text('{"refresh_token": "victim-secret"}')
+    os.chmod(real, 0o600)
+
+    link = tmp_path / "cred.json"
+    os.symlink(str(real), str(link))
+
+    cred = CredentialsFile(str(link))
+    # load() must return None (refused) rather than the linked file's contents.
+    assert cred.load() is None
+
+
+def test_credentials_file_load_refuses_loose_parent(tmp_path):
+    """Parent-dir permission check: refuse to load when the parent
+    directory is group- or world-writable."""
+    path = tmp_path / "rel.json"
+    cred = CredentialsFile(str(path))
+    cred.save({"refresh_token": "JTI.SEC"})
+
+    # Loosen the parent dir.
+    os.chmod(str(tmp_path), 0o777)
+    try:
+        assert cred.load() is None
+    finally:
+        os.chmod(str(tmp_path), 0o700)
+
+
+def test_credentials_file_save_refuses_loose_parent(tmp_path):
+    """Symmetric: refuse to WRITE to a credentials path inside a
+    world-writable directory."""
+    cred = CredentialsFile(str(tmp_path / "rel.json"))
+    os.chmod(str(tmp_path), 0o777)
+    try:
+        import pytest
+
+        with pytest.raises(OSError, match="world-writable"):
+            cred.save({"refresh_token": "x"})
+    finally:
+        os.chmod(str(tmp_path), 0o700)
+
+
 def test_in_memory_store_returns_copies(tmp_path):
     store = InMemoryCredentialsStore(relay_url="https://r", refresh_token="JTI.SEC")
     loaded = store.load()

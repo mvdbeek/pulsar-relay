@@ -8,13 +8,29 @@ Ships:
   :class:`pulsar_relay_client.RelayAuthManager` that returns a canned
   access token without touching the network. Use it via the
   ``auth_manager=`` constructor parameter on :class:`RelayTransport`.
+
+**These helpers bypass authentication.** They are safe in test
+processes but disastrous if accidentally imported into a production
+deployment — see Client Low #16 in the security review. Importing
+this module emits a ``RuntimeWarning`` so a stray ``from
+pulsar_relay_client.testing import ...`` in a config file shows up
+in stderr at process start.
 """
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 from .topics import TopicOwnershipConflictError
+
+warnings.warn(
+    "pulsar_relay_client.testing was imported. Its FakeRelayClient and "
+    "FakeAuthManager bypass authentication and must NEVER be used in a "
+    "production process. Use them only from test code.",
+    RuntimeWarning,
+    stacklevel=2,
+)
 
 
 class FakeAuthManager:

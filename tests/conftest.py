@@ -2,15 +2,34 @@
 
 import asyncio
 import os
+import secrets
 import socket
 import subprocess
 
-import httpx
-import pytest
-from fastapi.testclient import TestClient
+# Populate startup-required secrets BEFORE pulsar_relay is imported. The
+# config module calls ``load_settings()`` at import time and the lifespan's
+# ``validate_startup_secrets`` enforces them. We pass real (random) values
+# rather than enabling PULSAR_ALLOW_INSECURE_DEFAULTS so the test suite
+# exercises the same code path as production. CI sets a fixed
+# PULSAR_VALKEY_PASSWORD that matches the ``--requirepass`` flag on
+# the runner Valkey (see .github/workflows/ci.yml); the ``setdefault``
+# is a no-op there.
+os.environ.setdefault("PULSAR_JWT_SECRET_KEY", secrets.token_urlsafe(32))
+os.environ.setdefault("PULSAR_BOOTSTRAP_ADMIN_PASSWORD", secrets.token_urlsafe(16))
+if os.environ.get("PULSAR_ALLOW_INSECURE_DEFAULTS") != "1":
+    os.environ.setdefault("PULSAR_VALKEY_PASSWORD", secrets.token_urlsafe(16))
+# CORS / TrustedHost allow-lists: tests use the FastAPI TestClient which
+# sends Host=testserver and Origin=http://testserver — accept both. Real
+# deployments configure these explicitly via env vars.
+os.environ.setdefault("PULSAR_ALLOWED_ORIGINS", '["http://testserver", "http://test"]')
+os.environ.setdefault("PULSAR_TRUSTED_HOSTS", '["testserver", "test", "localhost", "127.0.0.1"]')
 
-from pulsar_relay.api import messages, websocket
-from pulsar_relay.auth.dependencies import (
+import httpx  # noqa: E402
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+from pulsar_relay.api import messages, websocket  # noqa: E402
+from pulsar_relay.auth.dependencies import (  # noqa: E402
     set_device_code_storage,
     set_oidc_clients,
     set_oidc_state_storage,
@@ -18,23 +37,38 @@ from pulsar_relay.auth.dependencies import (
     set_topic_storage,
     set_user_storage,
 )
-from pulsar_relay.auth.device_flow import InMemoryDeviceCodeStorage
-from pulsar_relay.auth.jwt import create_access_token
-from pulsar_relay.auth.models import UserCreate
-from pulsar_relay.auth.oidc_state import InMemoryOIDCStateStorage
-from pulsar_relay.auth.refresh import InMemoryRefreshTokenStorage
-from pulsar_relay.auth.storage import InMemoryUserStorage, UserStorage
-from pulsar_relay.auth.topic_storage import InMemoryTopicStorage
-from pulsar_relay.core.connections import ConnectionManager
-from pulsar_relay.core.polling import PollManager
-from pulsar_relay.main import app
-from pulsar_relay.storage.memory import MemoryStorage
+from pulsar_relay.auth.device_flow import InMemoryDeviceCodeStorage  # noqa: E402
+from pulsar_relay.auth.jwt import create_access_token  # noqa: E402
+from pulsar_relay.auth.models import UserCreate  # noqa: E402
+from pulsar_relay.auth.oidc_state import InMemoryOIDCStateStorage  # noqa: E402
+from pulsar_relay.auth.refresh import InMemoryRefreshTokenStorage  # noqa: E402
+from pulsar_relay.auth.storage import InMemoryUserStorage, UserStorage  # noqa: E402
+from pulsar_relay.auth.topic_storage import InMemoryTopicStorage  # noqa: E402
+from pulsar_relay.core.connections import ConnectionManager  # noqa: E402
+from pulsar_relay.core.polling import PollManager  # noqa: E402
+from pulsar_relay.main import app  # noqa: E402
+from pulsar_relay.storage.memory import MemoryStorage  # noqa: E402
 
 
 @pytest.fixture
 def anyio_backend():
     """Use asyncio backend for anyio tests."""
     return "asyncio"
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiter():
+    """Wipe the shared slowapi Limiter state before each test.
+
+    Rate limits are scoped per-IP and the test client always presents
+    ``testclient`` / ``127.0.0.1`` — without a reset, the 5/min auth cap
+    leaks across tests in the same module and tests start seeing 429.
+    """
+    from pulsar_relay.api.limits import limiter
+
+    limiter.reset()
+    yield
+    limiter.reset()
 
 
 async def create_default_users(storage: UserStorage) -> None:

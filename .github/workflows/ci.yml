@@ -43,29 +43,55 @@ jobs:
       matrix:
         python-version: [ '3.10', '3.11', '3.12', '3.13', '3.14' ]
 
-    # Make Valkey available as a service container. The service's port 6379
-    # is published to the runner so tests can connect to localhost:6379.
-    services:
-      valkey:
-        image: valkey/valkey:latest
-        ports:
-          - 6379:6379
-        # Use docker run options to set a sysctl required by Valkey/Redis
-        # and use a Redis-aware healthcheck (redis-cli ping) for faster, more
-        # accurate readiness detection on the runner.
-        options: >-
-          --health-cmd "redis-cli -h localhost -p 6379 ping || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 60
+    # Note: we deliberately do NOT use the GitHub Actions ``services:``
+    # syntax for Valkey because it can't override the container CMD to
+    # pass ``--requirepass``. Running Valkey via a manual ``docker run``
+    # step (below) lets CI exercise the AUTH-required path that
+    # production uses — without it, a regression like the
+    # PubSubCoordinator credentials leak (fixed in 60d739c) sails
+    # through CI and only shows up when a real operator boots the
+    # local-dev compose.
 
     env:
       # Enable the integration tests that check for a running Valkey instance
       VALKEY_INTEGRATION_TEST: '1'
+      # Match what the docker run step below sets via --requirepass.
+      # Fixed value; this is an ephemeral runner so there's no point
+      # generating per-run randomness.
+      PULSAR_VALKEY_PASSWORD: 'ci-valkey-password'
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Start authenticated Valkey
+        # Use the same image / version pin as the GHA service syntax
+        # would have, but drive it via docker run so we can pass
+        # ``--requirepass``. The healthcheck uses the same password so
+        # the wait loop below knows when the daemon is actually
+        # accepting authenticated traffic.
+        run: |
+          docker run -d \
+            --name valkey \
+            -p 6379:6379 \
+            --health-cmd "redis-cli -a $PULSAR_VALKEY_PASSWORD ping | grep PONG" \
+            --health-interval 5s \
+            --health-timeout 5s \
+            --health-retries 60 \
+            valkey/valkey:latest \
+            valkey-server --requirepass "$PULSAR_VALKEY_PASSWORD"
+          # Wait for the healthcheck to report healthy (max ~5 min).
+          for _ in $(seq 1 60); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' valkey 2>/dev/null || echo "starting")
+            if [ "$status" = "healthy" ]; then
+              echo "Valkey is healthy (authenticated)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Valkey never became healthy"
+          docker logs valkey
+          exit 1
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -101,6 +127,10 @@ jobs:
       - name: Run pytest
         # Run pytest env only
         run: tox -e pytest
+
+      - name: Dump Valkey logs on failure
+        if: failure()
+        run: docker logs valkey || true
 
   client-tests:
     name: pulsar-relay-client unit tests

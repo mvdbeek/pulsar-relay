@@ -13,31 +13,39 @@ from datetime import datetime, timedelta
 import pytest
 
 from pulsar_relay.storage.valkey import ValkeyStorage
+from tests._storage_helpers import reset_valkey_storage, valkey_test_credentials
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("VALKEY_INTEGRATION_TEST"), reason="VALKEY_INTEGRATION_TEST environment variable not set"
 )
 
+# Storage is namespaced by ``(owner_id, topic_name)`` since Phase 3c
+# (API H#5). These integration tests pin one owner; cross-owner
+# isolation is exercised separately in tests/test_topic_namespacing.py.
+OWNER = "u-integ"
+
 
 @pytest.fixture
 async def valkey_storage():
     """Create a ValkeyStorage instance and connect to real Valkey."""
+    username, password = valkey_test_credentials()
     storage = ValkeyStorage(
         host="localhost",
         port=6379,
         max_messages_per_topic=100,
-        ttl_seconds=3600,
+        username=username,
+        password=password,
     )
 
     try:
         await storage.connect()
         # Clear any existing test data
-        await storage.clear()
+        await reset_valkey_storage(storage)
         yield storage
     finally:
         # Cleanup after tests
         try:
-            await storage.clear()
+            await reset_valkey_storage(storage)
         except Exception:
             pass
         await storage.disconnect()
@@ -49,7 +57,8 @@ class TestValkeyIntegrationBasics:
     @pytest.mark.anyio
     async def test_connection_and_disconnection(self):
         """Test connecting and disconnecting from Valkey."""
-        storage = ValkeyStorage(host="localhost", port=6379)
+        username, password = valkey_test_credentials()
+        storage = ValkeyStorage(host="localhost", port=6379, username=username, password=password)
 
         # Test connection
         await storage.connect()
@@ -71,6 +80,7 @@ class TestValkeyIntegrationBasics:
 
         # Save message - returns stream ID as message ID
         message_id = await valkey_storage.save_message(
+            owner_id=OWNER,
             topic="test-topic",
             payload={"data": "test value", "number": 42},
             timestamp=timestamp,
@@ -81,7 +91,7 @@ class TestValkeyIntegrationBasics:
         assert "-" in message_id
 
         # Retrieve messages
-        messages = await valkey_storage.get_messages("test-topic")
+        messages = await valkey_storage.get_messages(OWNER, "test-topic")
 
         assert len(messages) == 1
         assert messages[0]["message_id"] == message_id
@@ -99,6 +109,7 @@ class TestValkeyIntegrationBasics:
         message_ids = []
         for i in range(10):
             msg_id = await valkey_storage.save_message(
+                owner_id=OWNER,
                 topic="multi-test",
                 payload={"index": i, "data": f"message_{i}"},
                 timestamp=base_time + timedelta(seconds=i),
@@ -106,7 +117,7 @@ class TestValkeyIntegrationBasics:
             message_ids.append(msg_id)
 
         # Retrieve all messages
-        messages = await valkey_storage.get_messages("multi-test", limit=20)
+        messages = await valkey_storage.get_messages(OWNER, "multi-test", limit=20)
 
         assert len(messages) == 10
 
@@ -126,6 +137,7 @@ class TestValkeyIntegrationBasics:
         for topic_idx, topic in enumerate(topics):
             for msg_idx in range(5):
                 await valkey_storage.save_message(
+                    owner_id=OWNER,
                     topic=topic,
                     payload={"topic": topic, "index": msg_idx},
                     timestamp=base_time + timedelta(seconds=msg_idx),
@@ -133,7 +145,7 @@ class TestValkeyIntegrationBasics:
 
         # Verify each topic has correct messages
         for topic in topics:
-            messages = await valkey_storage.get_messages(topic)
+            messages = await valkey_storage.get_messages(OWNER, topic)
             assert len(messages) == 5
 
             for msg in messages:
@@ -152,20 +164,21 @@ class TestValkeyIntegrationPagination:
         # Save 20 messages
         for i in range(20):
             await valkey_storage.save_message(
+                owner_id=OWNER,
                 topic="pagination-test",
                 payload={"index": i},
                 timestamp=base_time + timedelta(seconds=i),
             )
 
         # Get first page (10 messages)
-        page1 = await valkey_storage.get_messages("pagination-test", limit=10)
+        page1 = await valkey_storage.get_messages(OWNER, "pagination-test", limit=10)
         assert len(page1) == 10
         assert page1[0]["payload"]["index"] == 0
         assert page1[9]["payload"]["index"] == 9
 
         # Get second page using last stream ID
         last_stream_id = page1[-1]["stream_id"]
-        page2 = await valkey_storage.get_messages("pagination-test", since=last_stream_id, limit=10)
+        page2 = await valkey_storage.get_messages(OWNER, "pagination-test", since=last_stream_id, limit=10)
         assert len(page2) == 10
         assert page2[0]["payload"]["index"] == 10
         assert page2[9]["payload"]["index"] == 19
@@ -178,13 +191,14 @@ class TestValkeyIntegrationPagination:
         # Save only 5 messages
         for i in range(5):
             await valkey_storage.save_message(
+                owner_id=OWNER,
                 topic="limited-topic",
                 payload={"index": i},
                 timestamp=base_time + timedelta(seconds=i),
             )
 
         # Request 100 messages
-        messages = await valkey_storage.get_messages("limited-topic", limit=100)
+        messages = await valkey_storage.get_messages(OWNER, "limited-topic", limit=100)
 
         # Should only get 5
         assert len(messages) == 5
@@ -202,13 +216,14 @@ class TestValkeyIntegrationTrimming:
         # Save 150 messages
         for i in range(150):
             await valkey_storage.save_message(
+                owner_id=OWNER,
                 topic="trim-test",
                 payload={"index": i},
                 timestamp=base_time + timedelta(seconds=i),
             )
 
         # Check topic length - should be exactly 100 (exact trimming after each save)
-        length = await valkey_storage.get_topic_length("trim-test")
+        length = await valkey_storage.get_topic_length(OWNER, "trim-test")
         assert length == 100
 
     @pytest.mark.anyio
@@ -219,25 +234,26 @@ class TestValkeyIntegrationTrimming:
         # Save 50 messages
         for i in range(50):
             await valkey_storage.save_message(
+                owner_id=OWNER,
                 topic="manual-trim",
                 payload={"index": i},
                 timestamp=base_time + timedelta(seconds=i),
             )
 
         # Verify we have 50 messages
-        initial_length = await valkey_storage.get_topic_length("manual-trim")
+        initial_length = await valkey_storage.get_topic_length(OWNER, "manual-trim")
         assert initial_length == 50
 
         # Trim to keep only 20
-        removed = await valkey_storage.trim_topic("manual-trim", keep_count=20)
+        removed = await valkey_storage.trim_topic(OWNER, "manual-trim", keep_count=20)
         assert removed == 30
 
         # Verify we now have 20 messages
-        final_length = await valkey_storage.get_topic_length("manual-trim")
+        final_length = await valkey_storage.get_topic_length(OWNER, "manual-trim")
         assert final_length == 20
 
         # Verify we kept the most recent messages
-        messages = await valkey_storage.get_messages("manual-trim", limit=20)
+        messages = await valkey_storage.get_messages(OWNER, "manual-trim", limit=20)
         assert len(messages) == 20
         # Due to trimming from the beginning, we should have messages 30-49
         assert messages[0]["payload"]["index"] >= 30
@@ -250,17 +266,18 @@ class TestValkeyIntegrationTrimming:
         # Save only 10 messages
         for i in range(10):
             await valkey_storage.save_message(
+                owner_id=OWNER,
                 topic="small-topic",
                 payload={"index": i},
                 timestamp=base_time + timedelta(seconds=i),
             )
 
         # Try to trim keeping 50 messages
-        removed = await valkey_storage.trim_topic("small-topic", keep_count=50)
+        removed = await valkey_storage.trim_topic(OWNER, "small-topic", keep_count=50)
         assert removed == 0
 
         # Verify we still have all 10 messages
-        length = await valkey_storage.get_topic_length("small-topic")
+        length = await valkey_storage.get_topic_length(OWNER, "small-topic")
         assert length == 10
 
 
@@ -274,6 +291,7 @@ class TestValkeyIntegrationPerformance:
 
         async def write_message(i: int):
             await valkey_storage.save_message(
+                owner_id=OWNER,
                 topic="concurrent-writes",
                 payload={"index": i},
                 timestamp=base_time + timedelta(milliseconds=i),
@@ -283,7 +301,7 @@ class TestValkeyIntegrationPerformance:
         await asyncio.gather(*[write_message(i) for i in range(50)])
 
         # Verify all messages were saved
-        length = await valkey_storage.get_topic_length("concurrent-writes")
+        length = await valkey_storage.get_topic_length(OWNER, "concurrent-writes")
         assert length == 50
 
     @pytest.mark.anyio
@@ -294,6 +312,7 @@ class TestValkeyIntegrationPerformance:
         async def write_to_topic(topic_idx: int):
             for msg_idx in range(10):
                 await valkey_storage.save_message(
+                    owner_id=OWNER,
                     topic=f"concurrent-topic-{topic_idx}",
                     payload={"topic_idx": topic_idx, "msg_idx": msg_idx},
                     timestamp=base_time + timedelta(milliseconds=msg_idx),
@@ -304,7 +323,7 @@ class TestValkeyIntegrationPerformance:
 
         # Verify each topic has 10 messages
         for i in range(10):
-            length = await valkey_storage.get_topic_length(f"concurrent-topic-{i}")
+            length = await valkey_storage.get_topic_length(OWNER, f"concurrent-topic-{i}")
             assert length == 10
 
     @pytest.mark.anyio
@@ -316,13 +335,14 @@ class TestValkeyIntegrationPerformance:
         large_data = "x" * 100_000
 
         await valkey_storage.save_message(
+            owner_id=OWNER,
             topic="large-payload",
             payload={"data": large_data, "size": len(large_data)},
             timestamp=base_time,
         )
 
         # Retrieve and verify
-        messages = await valkey_storage.get_messages("large-payload")
+        messages = await valkey_storage.get_messages(OWNER, "large-payload")
         assert len(messages) == 1
         assert len(messages[0]["payload"]["data"]) == 100_000
         assert messages[0]["payload"]["size"] == 100_000
@@ -334,26 +354,27 @@ class TestValkeyIntegrationEdgeCases:
     @pytest.mark.anyio
     async def test_empty_topic(self, valkey_storage):
         """Test retrieving from a non-existent/empty topic."""
-        messages = await valkey_storage.get_messages("non-existent-topic")
+        messages = await valkey_storage.get_messages(OWNER, "non-existent-topic")
         assert messages == []
 
     @pytest.mark.anyio
     async def test_topic_length_nonexistent(self, valkey_storage):
         """Test getting length of non-existent topic."""
-        length = await valkey_storage.get_topic_length("does-not-exist")
+        length = await valkey_storage.get_topic_length(OWNER, "does-not-exist")
         assert length == 0
 
     @pytest.mark.anyio
     async def test_message_without_metadata(self, valkey_storage):
         """Test saving and retrieving message without metadata."""
         await valkey_storage.save_message(
+            owner_id=OWNER,
             topic="no-metadata",
             payload={"data": "test"},
             timestamp=datetime(2025, 1, 1, 12, 0, 0),
             metadata=None,
         )
 
-        messages = await valkey_storage.get_messages("no-metadata")
+        messages = await valkey_storage.get_messages(OWNER, "no-metadata")
         assert len(messages) == 1
         assert messages[0]["metadata"] == {}
 
@@ -371,6 +392,7 @@ class TestValkeyIntegrationEdgeCases:
 
         for topic in special_topics:
             await valkey_storage.save_message(
+                owner_id=OWNER,
                 topic=topic,
                 payload={"topic": topic},
                 timestamp=base_time,
@@ -378,7 +400,7 @@ class TestValkeyIntegrationEdgeCases:
 
         # Verify all topics work
         for topic in special_topics:
-            messages = await valkey_storage.get_messages(topic)
+            messages = await valkey_storage.get_messages(OWNER, topic)
             assert len(messages) == 1
             assert messages[0]["payload"]["topic"] == topic
 
@@ -386,6 +408,7 @@ class TestValkeyIntegrationEdgeCases:
     async def test_unicode_in_payload(self, valkey_storage):
         """Test handling Unicode characters in payload."""
         await valkey_storage.save_message(
+            owner_id=OWNER,
             topic="unicode-test",
             payload={
                 "text": "Hello 世界 🌍",
@@ -395,7 +418,7 @@ class TestValkeyIntegrationEdgeCases:
             timestamp=datetime(2025, 1, 1, 12, 0, 0),
         )
 
-        messages = await valkey_storage.get_messages("unicode-test")
+        messages = await valkey_storage.get_messages(OWNER, "unicode-test")
         assert len(messages) == 1
         assert messages[0]["payload"]["text"] == "Hello 世界 🌍"
         assert messages[0]["payload"]["emoji"] == "🚀💻🔥"
@@ -423,6 +446,7 @@ class TestValkeyIntegrationHealthAndMonitoring:
         # Perform some operations
         for i in range(10):
             await valkey_storage.save_message(
+                owner_id=OWNER,
                 topic="health-test",
                 payload={"index": i},
                 timestamp=base_time + timedelta(seconds=i),
@@ -449,6 +473,7 @@ class TestValkeyIntegrationCleanup:
             topic = f"clear-test-{topic_idx}"
             for msg_idx in range(10):
                 await valkey_storage.save_message(
+                    owner_id=OWNER,
                     topic=topic,
                     payload={"index": msg_idx},
                     timestamp=base_time + timedelta(seconds=msg_idx),
@@ -456,15 +481,15 @@ class TestValkeyIntegrationCleanup:
 
         # Verify topics exist
         for topic_idx in range(5):
-            length = await valkey_storage.get_topic_length(f"clear-test-{topic_idx}")
+            length = await valkey_storage.get_topic_length(OWNER, f"clear-test-{topic_idx}")
             assert length == 10
 
         # Clear all topics
-        await valkey_storage.clear()
+        await reset_valkey_storage(valkey_storage)
 
         # Verify all topics are cleared
         for topic_idx in range(5):
-            length = await valkey_storage.get_topic_length(f"clear-test-{topic_idx}")
+            length = await valkey_storage.get_topic_length(OWNER, f"clear-test-{topic_idx}")
             assert length == 0
 
 
@@ -481,7 +506,14 @@ async def test_connection_failure_handling():
 @pytest.mark.anyio
 async def test_full_workflow():
     """Test a complete workflow: connect, write, read, trim, disconnect."""
-    storage = ValkeyStorage(host="localhost", port=6379, max_messages_per_topic=50)
+    username, password = valkey_test_credentials()
+    storage = ValkeyStorage(
+        host="localhost",
+        port=6379,
+        max_messages_per_topic=50,
+        username=username,
+        password=password,
+    )
 
     try:
         # Connect
@@ -489,12 +521,13 @@ async def test_full_workflow():
         assert storage._connected is True
 
         # Clear any existing data
-        await storage.clear()
+        await reset_valkey_storage(storage)
 
         # Write messages
         base_time = datetime(2025, 1, 1, 12, 0, 0)
         for i in range(30):
             await storage.save_message(
+                owner_id=OWNER,
                 topic="workflow-test",
                 payload={"index": i, "data": f"message {i}"},
                 timestamp=base_time + timedelta(seconds=i),
@@ -502,23 +535,23 @@ async def test_full_workflow():
             )
 
         # Verify length
-        length = await storage.get_topic_length("workflow-test")
+        length = await storage.get_topic_length(OWNER, "workflow-test")
         assert length == 30
 
         # Read messages
-        messages = await storage.get_messages("workflow-test", limit=10)
+        messages = await storage.get_messages(OWNER, "workflow-test", limit=10)
         assert len(messages) == 10
 
         # Read next page
         last_id = messages[-1]["stream_id"]
-        next_messages = await storage.get_messages("workflow-test", since=last_id, limit=10)
+        next_messages = await storage.get_messages(OWNER, "workflow-test", since=last_id, limit=10)
         assert len(next_messages) == 10
 
         # Trim
-        removed = await storage.trim_topic("workflow-test", keep_count=15)
+        removed = await storage.trim_topic(OWNER, "workflow-test", keep_count=15)
         assert removed == 15
 
-        new_length = await storage.get_topic_length("workflow-test")
+        new_length = await storage.get_topic_length(OWNER, "workflow-test")
         assert new_length == 15
 
         # Health check
@@ -526,9 +559,9 @@ async def test_full_workflow():
         assert health["status"] == "healthy"
 
         # Clear
-        await storage.clear()
+        await reset_valkey_storage(storage)
 
-        final_length = await storage.get_topic_length("workflow-test")
+        final_length = await storage.get_topic_length(OWNER, "workflow-test")
         assert final_length == 0
 
     finally:

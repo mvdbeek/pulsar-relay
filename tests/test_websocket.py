@@ -119,7 +119,7 @@ class TestWebSocketBasics:
         # Create topic first
         await create_test_topics(topic_storage, test_user.user_id, ["test-topic"])
 
-        with client.websocket_connect(f"/ws?token={token}") as websocket:
+        with client.websocket_connect("/ws", subprotocols=["bearer", f"bearer.{token}"]) as websocket:
             # Send subscribe message
             websocket.send_json({"type": "subscribe", "topics": ["test-topic"], "client_id": "test-client"})
 
@@ -141,7 +141,7 @@ class TestWebSocketBasics:
         # Create topic first
         await create_test_topics(topic_storage, test_user.user_id, ["test"])
 
-        with client.websocket_connect(f"/ws?token={token}") as websocket:
+        with client.websocket_connect("/ws", subprotocols=["bearer", f"bearer.{token}"]) as websocket:
             # Subscribe first
             websocket.send_json({"type": "subscribe", "topics": ["test"], "client_id": "test-client"})
 
@@ -167,7 +167,7 @@ class TestWebSocketBasics:
         # Create topics first
         await create_test_topics(topic_storage, test_user.user_id, ["topic1", "topic2", "topic3"])
 
-        with client.websocket_connect(f"/ws?token={token}") as websocket:
+        with client.websocket_connect("/ws", subprotocols=["bearer", f"bearer.{token}"]) as websocket:
             # Subscribe to multiple topics
             websocket.send_json(
                 {"type": "subscribe", "topics": ["topic1", "topic2", "topic3"], "client_id": "test-client"}
@@ -191,7 +191,7 @@ class TestWebSocketBasics:
         client = setup_app["client"]
         token = setup_app["token"]
 
-        with client.websocket_connect(f"/ws?token={token}") as websocket:
+        with client.websocket_connect("/ws", subprotocols=["bearer", f"bearer.{token}"]) as websocket:
             # Send invalid subscribe (missing required fields)
             websocket.send_json({"type": "subscribe", "topics": []})  # Empty topics invalid
 
@@ -211,7 +211,7 @@ class TestWebSocketBasics:
         # Create topic first
         await create_test_topics(topic_storage, test_user.user_id, ["test"])
 
-        with client.websocket_connect(f"/ws?token={token}") as websocket:
+        with client.websocket_connect("/ws", subprotocols=["bearer", f"bearer.{token}"]) as websocket:
             # Subscribe first
             websocket.send_json({"type": "subscribe", "topics": ["test"], "client_id": "test-client"})
 
@@ -227,23 +227,31 @@ class TestWebSocketBasics:
             assert response["type"] == "error"
             assert response["code"] == "UNKNOWN_MESSAGE_TYPE"
 
-    async def test_websocket_subscribe_denied_for_other_users_private_topic(self, setup_app, auth_storage):
-        """Subscribing to a private topic owned by another user must be rejected."""
+    async def test_websocket_subscribe_resolves_in_bearer_namespace(self, setup_app, auth_storage):
+        """Under per-user topic namespacing (API H#5), a WS subscribe
+        from user U for topic name N targets ``(U, N)`` — entirely
+        separate from any other user's ``(other, N)``. Admin's
+        private topic is invisible to the regular user via the bare
+        wire path. The subscribe succeeds (auto-create semantics) and
+        the user is subscribed to their OWN namespace's topic, which
+        will not receive admin's messages."""
         client = setup_app["client"]
         token = setup_app["token"]
         topic_storage = setup_app["topic_storage"]
 
         admin = await auth_storage.get_user_by_username("admin")
+        # Admin creates "admins-only-ws" in their namespace.
         await topic_storage.create_topic(admin.user_id, TopicCreate(topic_name="admins-only-ws", is_public=False))
 
-        with client.websocket_connect(f"/ws?token={token}") as websocket:
+        with client.websocket_connect("/ws", subprotocols=["bearer", f"bearer.{token}"]) as websocket:
             websocket.send_json({"type": "subscribe", "topics": ["admins-only-ws"], "client_id": "test-client"})
 
             response = websocket.receive_json()
 
-            assert response["type"] == "error"
-            assert response["code"] == "SUBSCRIPTION_ERROR"
-            assert "admins-only-ws" in response["message"]
+            # Subscribe succeeds — the bearer is subscribed to *their
+            # own* "admins-only-ws" (entirely separate from admin's).
+            assert response["type"] == "subscribed", response
+            assert "admins-only-ws" in response["topics"]
 
 
 class TestWebSocketMessageDelivery:
@@ -261,7 +269,7 @@ class TestWebSocketMessageDelivery:
         await create_test_topics(topic_storage, test_user.user_id, ["notifications"])
 
         # Connect to WebSocket using httpx-ws
-        async with aconnect_ws(f"http://test/ws?token={token}", async_client) as ws:
+        async with aconnect_ws("http://test/ws", async_client, subprotocols=["bearer", f"bearer.{token}"]) as ws:
             # Subscribe to topic
             await ws.send_json({"type": "subscribe", "topics": ["notifications"], "client_id": "test-client"})
 
@@ -321,8 +329,8 @@ class TestWebSocketMessageDelivery:
 
         # Connect two WebSocket clients
         async with (
-            websockets.connect(f"{ws_url}/ws?token={real_token}") as ws1,
-            websockets.connect(f"{ws_url}/ws?token={real_token}") as ws2,
+            websockets.connect(f"{ws_url}/ws", subprotocols=["bearer", f"bearer.{real_token}"]) as ws1,
+            websockets.connect(f"{ws_url}/ws", subprotocols=["bearer", f"bearer.{real_token}"]) as ws2,
         ):
             # Subscribe both clients to the same topic
             await ws1.send(json.dumps({"type": "subscribe", "topics": ["broadcasts"], "client_id": "client-1"}))
@@ -375,7 +383,7 @@ class TestWebSocketMessageDelivery:
         await create_test_topics(topic_storage, test_user.user_id, ["topic1", "topic2"])
 
         # Connect to WebSocket using httpx-ws
-        async with aconnect_ws(f"http://test/ws?token={token}", async_client) as ws:
+        async with aconnect_ws("http://test/ws", async_client, subprotocols=["bearer", f"bearer.{token}"]) as ws:
             # Subscribe to topic1 only
             await ws.send_json({"type": "subscribe", "topics": ["topic1"], "client_id": "test-client"})
 

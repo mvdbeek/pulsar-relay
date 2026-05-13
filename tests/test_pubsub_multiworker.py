@@ -18,6 +18,7 @@ from datetime import datetime
 import httpx
 import pytest
 import websockets
+from websockets.typing import Subprotocol
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("VALKEY_INTEGRATION_TEST"), reason="VALKEY_INTEGRATION_TEST environment variable not set"
@@ -74,8 +75,10 @@ class TestMultiWorkerPubSub:
 
         async def websocket_client(client_id: int):
             """WebSocket client that subscribes to a topic and collects messages."""
-            uri = f"{ws_url}/ws?token={token}"
-            async with websockets.connect(uri) as websocket:
+            uri = f"{ws_url}/ws"
+            async with websockets.connect(
+                uri, subprotocols=[Subprotocol("bearer"), Subprotocol(f"bearer.{token}")]
+            ) as websocket:
                 # Subscribe to topic
                 subscribe_msg = {
                     "type": "subscribe",
@@ -181,8 +184,10 @@ class TestMultiWorkerPubSub:
 
         async def websocket_client(client_id: int):
             """WebSocket client that collects all messages."""
-            uri = f"{ws_url}/ws?token={token}"
-            async with websockets.connect(uri) as websocket:
+            uri = f"{ws_url}/ws"
+            async with websockets.connect(
+                uri, subprotocols=[Subprotocol("bearer"), Subprotocol(f"bearer.{token}")]
+            ) as websocket:
                 # Subscribe
                 await websocket.send(
                     json.dumps(
@@ -339,8 +344,10 @@ class TestMultiWorkerPubSub:
 
         async def client_for_topic_a():
             """Client subscribed only to topic-a."""
-            uri = f"{ws_url}/ws?token={token}"
-            async with websockets.connect(uri) as websocket:
+            uri = f"{ws_url}/ws"
+            async with websockets.connect(
+                uri, subprotocols=[Subprotocol("bearer"), Subprotocol(f"bearer.{token}")]
+            ) as websocket:
                 await websocket.send(
                     json.dumps(
                         {"type": "subscribe", "topics": [topic_a], "client_id": "client_topic_a", "offset": "last"}
@@ -362,8 +369,10 @@ class TestMultiWorkerPubSub:
 
         async def client_for_topic_b():
             """Client subscribed only to topic-b."""
-            uri = f"{ws_url}/ws?token={token}"
-            async with websockets.connect(uri) as websocket:
+            uri = f"{ws_url}/ws"
+            async with websockets.connect(
+                uri, subprotocols=[Subprotocol("bearer"), Subprotocol(f"bearer.{token}")]
+            ) as websocket:
                 await websocket.send(
                     json.dumps(
                         {"type": "subscribe", "topics": [topic_b], "client_id": "client_topic_b", "offset": "last"}

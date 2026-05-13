@@ -127,8 +127,20 @@ def test_byoc_device_flow_issues_independent_pair(relay_against_keycloak):
 
 
 def test_byoc_topic_pinning_against_real_relay(relay_against_keycloak):
-    """The BYOC user can create the three topics named for its ``sub``;
-    a different user cannot claim them, but can read public state."""
+    """The BYOC user can create the three topics named for its ``sub``,
+    and those topics belong to *them* — admin (or any other user)
+    creating a topic with the same bare name lands in their OWN
+    namespace and does NOT seize the BYOC user's record.
+
+    Under per-user topic namespacing (Phase 3c, API H#5) the squat
+    risk is closed structurally: ``(byoc.user_id, "job_setup_<sub>")``
+    and ``(admin.user_id, "job_setup_<sub>")`` are distinct records.
+    The previous version of this test asserted 4xx on the admin's
+    create attempt — that was correct under the flat namespace but
+    no longer applies; we now verify the new invariant directly by
+    re-reading the BYOC user's topic after the admin creates a
+    same-named one and confirming the owner is still the BYOC user.
+    """
     relay = relay_against_keycloak["base_url"]
     setup = relay_against_keycloak["keycloak"]
 
@@ -142,9 +154,9 @@ def test_byoc_topic_pinning_against_real_relay(relay_against_keycloak):
     byoc_user_id = me.json()["user_id"]
     sub = me.json()["username"]
 
-    # 1. The BYOC user creates the three topics.
-    for prefix in ("job_setup", "job_kill", "job_status_update"):
-        topic_name = f"{prefix}_{sub}"
+    # 1. The BYOC user creates the three topics under their own namespace.
+    topic_names = [f"{prefix}_{sub}" for prefix in ("job_setup", "job_kill", "job_status_update")]
+    for topic_name in topic_names:
         resp = httpx.post(
             f"{relay}/api/v1/topics",
             headers={**user_headers, "Content-Type": "application/json"},
@@ -154,8 +166,9 @@ def test_byoc_topic_pinning_against_real_relay(relay_against_keycloak):
         assert resp.status_code in (200, 201), resp.text
         assert resp.json()["owner_id"] == byoc_user_id
 
-    # 2. A different user (the bootstrap admin) tries to create the same
-    #    topic names and is rejected — the BYOC user owns them.
+    # 2. The bootstrap admin attempts to create the same names. Under
+    #    per-user namespacing this SUCCEEDS — admin gets their own
+    #    distinct topics — and must NOT affect the BYOC user's records.
     admin_login = httpx.post(
         f"{relay}/auth/login",
         data={"username": "admin", "password": "adminpw1234"},
@@ -166,19 +179,31 @@ def test_byoc_topic_pinning_against_real_relay(relay_against_keycloak):
         "Authorization": f"Bearer {admin_login.json()['access_token']}",
         "Content-Type": "application/json",
     }
-    for prefix in ("job_setup", "job_kill", "job_status_update"):
-        topic_name = f"{prefix}_{sub}"
+    admin_user_id = httpx.get(f"{relay}/auth/me", headers=admin_headers, timeout=5.0).json()["user_id"]
+    assert admin_user_id != byoc_user_id
+
+    for topic_name in topic_names:
+        # Admin's create succeeds under their own namespace.
         resp = httpx.post(
             f"{relay}/api/v1/topics",
             headers=admin_headers,
             json={"topic_name": topic_name},
             timeout=5.0,
         )
-        # The relay maps "already exists" to 400 — see api/topics.py.
-        # Any 4xx is acceptable; the contract is "admin can't seize ownership".
-        assert (
-            400 <= resp.status_code < 500
-        ), f"admin unexpectedly succeeded in claiming {topic_name}: {resp.status_code} {resp.text}"
+        assert resp.status_code in (200, 201), (
+            f"admin's create in their own namespace failed for {topic_name}: " f"{resp.status_code} {resp.text}"
+        )
+        assert resp.json()["owner_id"] == admin_user_id
+
+        # The BYOC user re-reads their topic — still owned by them,
+        # untouched by admin's parallel write.
+        readback = httpx.get(
+            f"{relay}/api/v1/topics/{topic_name}",
+            headers=user_headers,
+            timeout=5.0,
+        )
+        assert readback.status_code == 200, readback.text
+        assert readback.json()["owner_id"] == byoc_user_id, f"BYOC user's topic {topic_name} was seized by admin"
 
 
 def test_create_or_verify_topic_against_real_relay(relay_against_keycloak):

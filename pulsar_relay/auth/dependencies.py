@@ -11,6 +11,7 @@ from pulsar_relay.auth.models import TokenPayload, User
 from pulsar_relay.auth.storage import UserStorage
 
 if TYPE_CHECKING:
+    from pulsar_relay.auth.denylist import JWTDenylistStorage
     from pulsar_relay.auth.device_flow import DeviceCodeStorage
     from pulsar_relay.auth.oidc_client import OIDCClient
     from pulsar_relay.auth.oidc_state import OIDCStateStorage
@@ -35,6 +36,19 @@ _refresh_token_storage: Optional["RefreshTokenStorage"] = None
 _device_code_storage: Optional["DeviceCodeStorage"] = None
 _oidc_state_storage: Optional["OIDCStateStorage"] = None
 _oidc_clients: dict[str, "OIDCClient"] = {}
+_jwt_denylist: Optional["JWTDenylistStorage"] = None
+
+
+def set_jwt_denylist(storage: "JWTDenylistStorage") -> None:
+    """Install the JWT deny-list backend used by ``get_current_user``."""
+    global _jwt_denylist
+    _jwt_denylist = storage
+
+
+def get_jwt_denylist() -> "JWTDenylistStorage":
+    if _jwt_denylist is None:
+        raise RuntimeError("JWT denylist not initialized")
+    return _jwt_denylist
 
 
 def set_user_storage(storage: UserStorage) -> None:
@@ -141,7 +155,7 @@ async def get_token_payload(
         Token payload
 
     Raises:
-        HTTPException: If token is invalid or expired
+        HTTPException: If token is invalid, expired, or deny-listed
     """
     payload = decode_token(token)
     if payload is None:
@@ -150,6 +164,19 @@ async def get_token_payload(
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Deny-list check: /auth/logout adds the current jti to the deny-list
+    # so the access token cannot be used again before its natural expiry.
+    # Tokens issued before the jti claim landed (``jti is None``) are
+    # accepted as-is — they expire on their own under the short access
+    # TTL.
+    if payload.jti is not None and _jwt_denylist is not None:
+        if await _jwt_denylist.is_revoked(payload.jti):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     return payload
 
@@ -296,19 +323,14 @@ def require_topic_access(topic: str, permission_type: Literal["read", "write"]):
     ) -> User:
         """Check if user has access to the topic.
 
-        Args:
-            current_user: Current user
-
-        Returns:
-            Current user
-
-        Raises:
-            HTTPException: If user lacks access to topic
+        Owner is always the bearer (``current_user``) — topics are
+        per-user-namespaced (API H#5). Cross-user access via shared
+        topics was removed in Phase 4 (no wire path could express it).
         """
         topic_storage = get_topic_storage()
 
-        # Check if user can access the topic
         can_access = await topic_storage.user_can_access(
+            owner_id=current_user.user_id,
             topic_name=topic,
             user_id=current_user.user_id,
             permission_type=permission_type,
@@ -350,11 +372,14 @@ async def get_or_create_topic(topic_name: str, current_user: User):
 
     topic_storage = get_topic_storage()
 
-    # Try to get existing topic
-    topic = await topic_storage.get_topic(topic_name)
+    # Topics are scoped to the bearer (API H#5). Look up under
+    # ``(bearer.sub, topic_name)`` — two users having a topic named
+    # ``"jobs"`` is fine; they're stored as distinct records.
+    topic = await topic_storage.get_topic(current_user.user_id, topic_name)
 
     if topic:
         can_write = await topic_storage.user_can_access(
+            owner_id=current_user.user_id,
             topic_name=topic_name,
             user_id=current_user.user_id,
             permission_type="write",
@@ -371,7 +396,6 @@ async def get_or_create_topic(topic_name: str, current_user: User):
     try:
         topic_data = TopicCreate(
             topic_name=topic_name,
-            is_public=False,  # Default to private
             description=f"Auto-created topic by {current_user.username}",
         )
         topic = await topic_storage.create_topic(current_user.user_id, topic_data)
@@ -388,9 +412,10 @@ async def get_or_create_topic(topic_name: str, current_user: User):
         # Topic was created by another concurrent request - retry the get
         if "already exists" in str(e):
             logger.debug(f"Topic '{topic_name}' was created by concurrent request, retrying get")
-            topic = await topic_storage.get_topic(topic_name)
+            topic = await topic_storage.get_topic(current_user.user_id, topic_name)
             if topic:
                 can_write = await topic_storage.user_can_access(
+                    owner_id=current_user.user_id,
                     topic_name=topic_name,
                     user_id=current_user.user_id,
                     permission_type="write",

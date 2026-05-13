@@ -55,6 +55,12 @@ class PubSubCoordinator:
         # Create a dedicated client for subscription with callback
         # GLIDE requires a separate connection for PubSub subscriptions
         try:
+            # Mirror the publish-client's connection config — host,
+            # port, TLS, AND credentials. Without ``credentials`` the
+            # subscriber connection hits ``NOAUTH`` on a hardened
+            # Valkey (Phase 1 made AUTH required). The publish client
+            # was constructed by ``ValkeyStorage.connect`` with the
+            # right credentials; reuse them here.
             config = GlideClientConfiguration(
                 addresses=[
                     NodeAddress(
@@ -63,6 +69,7 @@ class PubSubCoordinator:
                     )
                 ],
                 use_tls=self._publish_client.config.use_tls,
+                credentials=self._publish_client.config.credentials,
                 pubsub_subscriptions=GlideClientConfiguration.PubSubSubscriptions(
                     channels_and_patterns={GlideClientConfiguration.PubSubChannelModes.Exact: {self.RELAY_CHANNEL}},
                     callback=self._pubsub_callback,

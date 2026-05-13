@@ -1,5 +1,12 @@
 name: pulsar-relay-local
 
+# WARNING: every secret below is a known, public string. This compose file is
+# for local development only. NEVER use these values — or this file — in any
+# environment that is reachable from outside your laptop. The relay's startup
+# guard refuses to boot with default secrets unless
+# PULSAR_ALLOW_INSECURE_DEFAULTS=1 is set, which is exactly what this file
+# does so contributors can run the stack with one command.
+
 services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
@@ -36,10 +43,11 @@ services:
 
   valkey:
     image: valkey/valkey:8.0
+    command: ["valkey-server", "--requirepass", "local-dev-valkey-password"]
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
+      test: ["CMD", "valkey-cli", "-a", "local-dev-valkey-password", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -51,6 +59,9 @@ services:
     ports:
       - "9000:9000"
     environment:
+      # Tells the startup guard that the dev defaults below are acceptable.
+      # Never set this flag outside local-dev / tests.
+      PULSAR_ALLOW_INSECURE_DEFAULTS: "1"
       # Don't ever ship this default to production — it's a known string.
       PULSAR_JWT_SECRET_KEY: local-dev-jwt-secret-do-not-use-in-prod-min-32-bytes-long
       # Bootstrap a local admin so /auth/login works in addition to OIDC.
@@ -61,6 +72,12 @@ services:
       PULSAR_STORAGE_BACKEND: valkey
       PULSAR_VALKEY_HOST: valkey
       PULSAR_VALKEY_PORT: "6379"
+      PULSAR_VALKEY_PASSWORD: local-dev-valkey-password
+      # Transport allow-lists. Both are required in prod; the local-dev
+      # compose binds the relay to localhost:9000 with the Keycloak
+      # browser-flow base URL.
+      PULSAR_ALLOWED_ORIGINS: '["http://localhost:9000", "http://localhost:8080"]'
+      PULSAR_TRUSTED_HOSTS: '["localhost", "127.0.0.1"]'
       # OIDC.
       PULSAR_OIDC__ENABLED: "true"
       PULSAR_OIDC__BASE_URL: http://localhost:9000

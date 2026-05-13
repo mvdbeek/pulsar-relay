@@ -5,7 +5,16 @@ import logging
 from datetime import datetime
 from typing import Any, Optional, Union, cast
 
-from glide import ExclusiveIdBound, GlideClient, GlideClientConfiguration, MaxId, MinId, NodeAddress, TrimByMaxLen
+from glide import (
+    ExclusiveIdBound,
+    GlideClient,
+    GlideClientConfiguration,
+    MaxId,
+    MinId,
+    NodeAddress,
+    ServerCredentials,
+    TrimByMaxLen,
+)
 
 from pulsar_relay.storage.base import StorageBackend
 
@@ -24,8 +33,9 @@ class ValkeyStorage(StorageBackend):
         host: str = "localhost",
         port: int = 6379,
         max_messages_per_topic: int = 1000000,
-        ttl_seconds: int = 3600,
         use_tls: bool = False,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
     ):
         """Initialize Valkey storage backend.
 
@@ -33,14 +43,26 @@ class ValkeyStorage(StorageBackend):
             host: Valkey host
             port: Valkey port
             max_messages_per_topic: Maximum messages per topic before trimming
-            ttl_seconds: Time-to-live for messages in seconds
             use_tls: Whether to use TLS for connection
+            username: Valkey ACL username (None falls back to legacy
+                requirepass authentication when ``password`` is supplied).
+            password: Valkey password / ACL password. None disables AUTH —
+                only acceptable in test/dev configurations.
+
+        Note:
+            The previous ``ttl_seconds`` parameter was accepted but
+            never enforced (the stream keys never received an
+            ``EXPIRE``). It has been removed to avoid implying a
+            retention guarantee that did not exist. Retention is
+            bounded only by ``max_messages_per_topic`` via stream
+            trim. Closes Storage H#6.
         """
         self.host = host
         self.port = port
         self.max_messages_per_topic = max_messages_per_topic
-        self.ttl_seconds = ttl_seconds
         self.use_tls = use_tls
+        self.username = username
+        self.password = password
         self._client: Optional[GlideClient] = None
         self._connected = False
 
@@ -50,10 +72,25 @@ class ValkeyStorage(StorageBackend):
             return
 
         try:
+            credentials: Optional[ServerCredentials] = None
+            if self.password is not None:
+                # Valkey 9 rejects ``HELLO ... AUTH "" <pw>`` (which is
+                # what ``glide_shared`` emits when ``username`` is falsy)
+                # with WRONGPASS, even though ``redis-cli -a`` (legacy
+                # ``AUTH <pw>``) works against the same instance. When
+                # the operator has only configured a password (legacy
+                # ``--requirepass`` mode), pin the username to
+                # ``"default"`` — the implicit ACL user that
+                # ``--requirepass`` configures.
+                credentials = ServerCredentials(
+                    username=self.username or "default",
+                    password=self.password,
+                )
             config = GlideClientConfiguration(
                 addresses=[NodeAddress(host=self.host, port=self.port)],
                 use_tls=self.use_tls,
                 request_timeout=5000,  # 5 second timeout
+                credentials=credentials,
             )
             self._client = await GlideClient.create(config)
             self._connected = True
@@ -69,30 +106,24 @@ class ValkeyStorage(StorageBackend):
             self._connected = False
             logger.info("Disconnected from Valkey")
 
-    def _get_stream_key(self, topic: str) -> str:
-        """Get the Valkey stream key for a topic.
+    def _get_stream_key(self, owner_id: str, topic: str) -> str:
+        """Stream key namespaced by topic owner (API H#5).
 
-        Args:
-            topic: Topic name
-
-        Returns:
-            Stream key in format "stream:topic:{topic}"
+        Returns ``stream:topic:{owner_id}/{topic}``. Two users with the
+        same bare topic name have entirely distinct streams.
         """
-        return f"stream:topic:{topic}"
+        return f"stream:topic:{owner_id}/{topic}"
 
-    def _get_metadata_key(self, topic: str) -> str:
-        """Get the Valkey hash key for topic metadata.
+    def _get_metadata_key(self, owner_id: str, topic: str) -> str:
+        """Metadata key namespaced by topic owner.
 
-        Args:
-            topic: Topic name
-
-        Returns:
-            Metadata key in format "meta:topic:{topic}"
+        Returns ``meta:topic:{owner_id}/{topic}``.
         """
-        return f"meta:topic:{topic}"
+        return f"meta:topic:{owner_id}/{topic}"
 
     async def save_message(
         self,
+        owner_id: str,
         topic: str,
         payload: dict[str, Any],
         timestamp: datetime,
@@ -112,7 +143,7 @@ class ValkeyStorage(StorageBackend):
         if not self._client:
             raise RuntimeError("Not connected to Valkey")
 
-        stream_key = self._get_stream_key(topic)
+        stream_key = self._get_stream_key(owner_id, topic)
 
         # Prepare stream entry as list of tuples (GLIDE API requirement)
         # Valkey Streams stores fields as key-value pairs
@@ -153,23 +184,18 @@ class ValkeyStorage(StorageBackend):
             raise
 
     async def get_messages(
-        self, topic: str, since: Optional[str] = None, limit: int = 10, reverse: bool = False
+        self,
+        owner_id: str,
+        topic: str,
+        since: Optional[str] = None,
+        limit: int = 10,
+        reverse: bool = False,
     ) -> list[dict[str, Any]]:
-        """Retrieve messages from Valkey Stream.
-
-        Args:
-            topic: Topic name
-            since: Message ID (stream ID) to start from (exclusive), or None for beginning/end
-            limit: Maximum number of messages to retrieve
-            reverse: If True, use XREVRANGE to get messages in reverse order (newest first)
-
-        Returns:
-            List of message dictionaries
-        """
+        """Retrieve messages from ``owner_id``'s Valkey Stream."""
         if not self._client:
             raise RuntimeError("Not connected to Valkey")
 
-        stream_key = self._get_stream_key(topic)
+        stream_key = self._get_stream_key(owner_id, topic)
 
         try:
             if reverse:
@@ -230,11 +256,12 @@ class ValkeyStorage(StorageBackend):
             logger.error(f"Failed to get messages from Valkey: {e}")
             raise
 
-    async def trim_topic(self, topic: str, keep_count: int) -> int:
+    async def trim_topic(self, owner_id: str, topic: str, keep_count: int) -> int:
         """Trim a topic to keep only the most recent messages.
 
         Args:
-            topic: Topic name
+            owner_id: Topic owner.
+            topic: Topic name (bare; namespacing applied internally).
             keep_count: Number of messages to keep
 
         Returns:
@@ -243,7 +270,7 @@ class ValkeyStorage(StorageBackend):
         if not self._client:
             raise RuntimeError("Not connected to Valkey")
 
-        stream_key = self._get_stream_key(topic)
+        stream_key = self._get_stream_key(owner_id, topic)
 
         try:
             # Get current length
@@ -265,11 +292,12 @@ class ValkeyStorage(StorageBackend):
             logger.error(f"Failed to trim topic in Valkey: {e}")
             raise
 
-    async def get_topic_length(self, topic: str) -> int:
+    async def get_topic_length(self, owner_id: str, topic: str) -> int:
         """Get the number of messages in a topic.
 
         Args:
-            topic: Topic name
+            owner_id: Topic owner.
+            topic: Topic name (bare).
 
         Returns:
             Number of messages in the topic
@@ -277,7 +305,7 @@ class ValkeyStorage(StorageBackend):
         if not self._client:
             raise RuntimeError("Not connected to Valkey")
 
-        stream_key = self._get_stream_key(topic)
+        stream_key = self._get_stream_key(owner_id, topic)
 
         try:
             length = await self._client.xlen(stream_key)
@@ -319,18 +347,3 @@ class ValkeyStorage(StorageBackend):
     async def close(self) -> None:
         """Close the Valkey connection."""
         await self.disconnect()
-
-    async def clear(self) -> None:
-        """Clear all messages from all topics (for testing only).
-
-        WARNING: This deletes all stream data.
-        """
-        if not self._client:
-            raise RuntimeError("Not connected to Valkey")
-
-        try:
-            await self._client.flushall()
-
-        except Exception as e:
-            logger.error(f"Failed to clear Valkey data: {e}")
-            raise

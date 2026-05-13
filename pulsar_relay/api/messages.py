@@ -4,11 +4,13 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from pulsar_relay.api.limits import limiter
 from pulsar_relay.auth.dependencies import get_or_create_topic, require_permission
 from pulsar_relay.auth.models import User
 from pulsar_relay.core.connections import ConnectionManager
+from pulsar_relay.core.idempotency import DEFAULT_IDEMPOTENCY_TTL_SECONDS
 from pulsar_relay.core.polling import PollManager
 from pulsar_relay.core.pubsub import PubSubCoordinator
 from pulsar_relay.models import (
@@ -74,7 +76,9 @@ def get_manager() -> Optional[ConnectionManager]:
 
 
 @router.post("/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("120/minute")
 async def create_message(
+    request: Request,
     message: Message,
     current_user: User = Depends(require_permission("write")),
 ) -> MessageResponse:
@@ -96,14 +100,35 @@ async def create_message(
     # This will auto-create the topic if it doesn't exist, with current_user as owner
     await get_or_create_topic(message.topic, current_user)
 
+    # Idempotency-Key dedupe (Client H#2). The pulsar-relay-client v1.1
+    # generates one UUID per logical publish and reuses it across
+    # retry attempts; we cache the response so a duplicate POST
+    # returns the original message_id instead of writing again.
+    owner_id = current_user.user_id
+    idem_key = request.headers.get("Idempotency-Key")
+    idem_storage = getattr(request.app.state, "idempotency_storage", None)
+    if idem_key and idem_storage is not None:
+        cached = await idem_storage.try_claim(owner_id, idem_key, DEFAULT_IDEMPOTENCY_TTL_SECONDS)
+        if cached:
+            log.info("Idempotency-Key hit for owner=%s key=%s — returning cached body", owner_id, idem_key)
+            return MessageResponse.model_validate(cached)
+
     timestamp = datetime.now(timezone.utc)
 
-    # Track metrics
-    messages_received_total.labels(topic=message.topic).inc()
+    # Internal channel key is composite (owner_id, topic_name) so user
+    # A's "jobs" cannot fan out to user B's "jobs" subscribers (API H#5).
+    # External wire (the WebSocket subscribe topic, the Message.topic
+    # field) keeps the bare name.
+    channel = f"{owner_id}/{message.topic}"
+
+    # Track metrics — metric labels intentionally use the composite key
+    # so per-tenant series are distinct.
+    messages_received_total.labels(topic=channel).inc()
 
     # Save to storage - storage backend generates and returns the message ID
-    with message_latency_seconds.labels(topic=message.topic).time():
+    with message_latency_seconds.labels(topic=channel).time():
         message_id = await storage.save_message(
+            owner_id=owner_id,
             topic=message.topic,
             payload=message.payload,
             timestamp=timestamp,
@@ -124,29 +149,32 @@ async def create_message(
     # If pub/sub coordinator is available, use it for cross-worker broadcasting
     # Otherwise, fall back to local-only broadcasting
     if _pubsub_coordinator:
-        # Publish to Valkey pub/sub - all workers will receive and broadcast to their local clients
-        await _pubsub_coordinator.publish_message(message.topic, message_dict)
+        await _pubsub_coordinator.publish_message(channel, message_dict)
     else:
-        # Local-only broadcasting (single worker or in-memory mode)
         manager = get_manager()
         if manager:
-            await manager.broadcast(message.topic, message_dict)
-
+            await manager.broadcast(channel, message_dict)
         if _poll_manager:
-            await _poll_manager.broadcast_to_topic(message.topic, message_dict)
+            await _poll_manager.broadcast_to_topic(channel, message_dict)
 
-    return MessageResponse(message_id=message_id, topic=message.topic, timestamp=timestamp)
+    response = MessageResponse(message_id=message_id, topic=message.topic, timestamp=timestamp)
+    if idem_key and idem_storage is not None:
+        await idem_storage.record(owner_id, idem_key, response.model_dump(mode="json"), DEFAULT_IDEMPOTENCY_TTL_SECONDS)
+    return response
 
 
 @router.post("/messages/bulk", response_model=BulkMessageResponse, status_code=status.HTTP_207_MULTI_STATUS)
+@limiter.limit("30/minute")
 async def create_bulk_messages(
-    request: BulkMessageRequest,
+    request: Request,
+    payload: BulkMessageRequest,
     current_user: User = Depends(require_permission("write")),
 ) -> BulkMessageResponse:
     """Create multiple messages in bulk.
 
     Args:
-        request: Bulk message request
+        request: ASGI request (consumed by the rate limiter)
+        payload: Bulk message request body
         current_user: Current authenticated user
 
     Returns:
@@ -154,8 +182,20 @@ async def create_bulk_messages(
     """
     storage = get_storage()
 
+    # Idempotency-Key dedupe (Client H#2) — see create_message above
+    # for the rationale. One header applies to the whole bulk submit;
+    # a retried bulk POST returns the original 207 body verbatim.
+    owner_id = current_user.user_id
+    idem_key = request.headers.get("Idempotency-Key")
+    idem_storage = getattr(request.app.state, "idempotency_storage", None)
+    if idem_key and idem_storage is not None:
+        cached = await idem_storage.try_claim(owner_id, idem_key, DEFAULT_IDEMPOTENCY_TTL_SECONDS)
+        if cached:
+            log.info("Bulk Idempotency-Key hit for owner=%s key=%s — returning cached body", owner_id, idem_key)
+            return BulkMessageResponse.model_validate(cached)
+
     # Validate access to ALL unique topics upfront - fail early if any are denied
-    unique_topics = {msg.topic for msg in request.messages}
+    unique_topics = {msg.topic for msg in payload.messages}
     denied_topics = set()
 
     for topic in unique_topics:
@@ -165,11 +205,12 @@ async def create_bulk_messages(
             # Track topics that user doesn't have access to
             denied_topics.add(topic)
 
-    # Fail fast if any topics are denied
+    # Fail fast if any topics are denied. Don't echo the topic names back
+    # (Medium #11 enumeration oracle).
     if denied_topics:
         raise HTTPException(
             status_code=403,
-            detail=f"Access denied to topics: {sorted(denied_topics)}",
+            detail="Access denied to one or more requested topics",
         )
 
     # All topics validated - proceed with message creation
@@ -177,19 +218,19 @@ async def create_bulk_messages(
     accepted = 0
     rejected = 0
 
-    for message in request.messages:
+    for message in payload.messages:
         try:
             timestamp = datetime.now(timezone.utc)
+            channel = f"{owner_id}/{message.topic}"
 
-            # Save to storage - storage backend generates and returns the message ID
             message_id = await storage.save_message(
+                owner_id=owner_id,
                 topic=message.topic,
                 payload=message.payload,
                 timestamp=timestamp,
                 metadata=message.metadata,
             )
 
-            # Prepare message for broadcasting
             ws_message = WebSocketMessage(
                 type="message",
                 message_id=message_id,
@@ -200,19 +241,14 @@ async def create_bulk_messages(
             )
             message_dict = ws_message.model_dump(mode="json")
 
-            # If pub/sub coordinator is available, use it for cross-worker broadcasting
-            # Otherwise, fall back to local-only broadcasting
             if _pubsub_coordinator:
-                # Publish to Valkey pub/sub - all workers will receive and broadcast to their local clients
-                await _pubsub_coordinator.publish_message(message.topic, message_dict)
+                await _pubsub_coordinator.publish_message(channel, message_dict)
             else:
-                # Local-only broadcasting (single worker or in-memory mode)
                 manager = get_manager()
                 if manager:
-                    await manager.broadcast(message.topic, message_dict)
-
+                    await manager.broadcast(channel, message_dict)
                 if _poll_manager:
-                    await _poll_manager.broadcast_to_topic(message.topic, message_dict)
+                    await _poll_manager.broadcast_to_topic(channel, message_dict)
 
             results.append(BulkMessageResult(message_id=message_id, topic=message.topic, status="accepted"))
             accepted += 1
@@ -221,7 +257,12 @@ async def create_bulk_messages(
             results.append(BulkMessageResult(message_id=None, topic=message.topic, status="rejected", error=str(e)))
             rejected += 1
 
-    return BulkMessageResponse(
+    bulk_response = BulkMessageResponse(
         results=results,
-        summary={"total": len(request.messages), "accepted": accepted, "rejected": rejected},
+        summary={"total": len(payload.messages), "accepted": accepted, "rejected": rejected},
     )
+    if idem_key and idem_storage is not None:
+        await idem_storage.record(
+            owner_id, idem_key, bulk_response.model_dump(mode="json"), DEFAULT_IDEMPOTENCY_TTL_SECONDS
+        )
+    return bulk_response

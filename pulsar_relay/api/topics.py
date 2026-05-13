@@ -13,8 +13,6 @@ from pulsar_relay.auth.dependencies import (
 )
 from pulsar_relay.auth.models import (
     TopicCreate,
-    TopicPermission,
-    TopicPermissionGrant,
     TopicPublic,
     TopicUpdate,
     User,
@@ -82,10 +80,8 @@ async def create_topic(
             topic_id=topic.topic_id,
             topic_name=topic.topic_name,
             owner_id=topic.owner_id,
-            is_public=topic.is_public,
             created_at=topic.created_at,
             description=topic.description,
-            allowed_user_ids=topic.allowed_user_ids,  # Owner can see all
         )
 
     except ValueError as e:
@@ -122,14 +118,32 @@ async def list_topics(
             topic_id=topic.topic_id,
             topic_name=topic.topic_name,
             owner_id=topic.owner_id,
-            is_public=topic.is_public,
             created_at=topic.created_at,
             description=topic.description,
-            # Only show allowed_user_ids to owner
-            allowed_user_ids=topic.allowed_user_ids if topic.owner_id == current_user.user_id else None,
         )
         for topic in topics
     ]
+
+
+# Note: ``/stats`` must be declared BEFORE ``/{topic_name}`` so FastAPI's
+# longest-static-prefix routing matches it. If reordered back, requests
+# to GET /api/v1/topics/stats would be matched by get_topic(topic_name="stats")
+# — a non-admin endpoint — and the admin permission check below would
+# never run. See security review API H#6.
+@router.get("/stats", response_model=dict[str, Any])
+async def get_topic_stats(
+    current_user: User = Depends(require_permission("admin")),
+) -> dict[str, Any]:
+    """Get topic statistics (admin only).
+
+    Args:
+        current_user: Current authenticated admin user
+
+    Returns:
+        Topic statistics
+    """
+    topic_storage = get_topic_storage()
+    return await topic_storage.get_stats()
 
 
 @router.get("/{topic_name}", response_model=TopicPublic)
@@ -151,7 +165,7 @@ async def get_topic(
     """
     topic_storage = get_topic_storage()
 
-    topic = await topic_storage.get_topic(topic_name)
+    topic = await topic_storage.get_topic(current_user.user_id, topic_name)
     if not topic:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -160,6 +174,7 @@ async def get_topic(
 
     # Check if user has access
     can_access = await topic_storage.user_can_access(
+        owner_id=current_user.user_id,
         topic_name=topic_name,
         user_id=current_user.user_id,
         permission_type="read",
@@ -176,11 +191,8 @@ async def get_topic(
         topic_id=topic.topic_id,
         topic_name=topic.topic_name,
         owner_id=topic.owner_id,
-        is_public=topic.is_public,
         created_at=topic.created_at,
         description=topic.description,
-        # Only show allowed_user_ids to owner
-        allowed_user_ids=topic.allowed_user_ids if topic.owner_id == current_user.user_id else None,
     )
 
 
@@ -219,7 +231,7 @@ async def get_topic_messages(
     message_storage = get_storage()
 
     # Verify topic exists
-    topic = await topic_storage.get_topic(topic_name)
+    topic = await topic_storage.get_topic(current_user.user_id, topic_name)
     if not topic:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -228,6 +240,7 @@ async def get_topic_messages(
 
     # Check if user has read access
     can_access = await topic_storage.user_can_access(
+        owner_id=current_user.user_id,
         topic_name=topic_name,
         user_id=current_user.user_id,
         permission_type="read",
@@ -255,10 +268,12 @@ async def get_topic_messages(
         )
     limit = min(limit, 100)
 
-    # Get messages from storage
-    # Use reverse=True for desc (newest first), reverse=False for asc (oldest first)
+    # Get messages from storage. Owner is the bearer — same as the
+    # topic_storage lookup above.
     reverse = order == "desc"
-    raw_messages = await message_storage.get_messages(topic=topic_name, since=cursor, limit=limit, reverse=reverse)
+    raw_messages = await message_storage.get_messages(
+        owner_id=current_user.user_id, topic=topic_name, since=cursor, limit=limit, reverse=reverse
+    )
 
     # Convert to response model
     messages = [
@@ -306,7 +321,7 @@ async def update_topic(
     """
     topic_storage = get_topic_storage()
 
-    topic = await topic_storage.get_topic(topic_name)
+    topic = await topic_storage.get_topic(current_user.user_id, topic_name)
     if not topic:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -321,8 +336,8 @@ async def update_topic(
         )
 
     updated_topic = await topic_storage.update_topic(
+        owner_id=current_user.user_id,
         topic_name=topic_name,
-        is_public=update_data.is_public,
         description=update_data.description,
     )
 
@@ -338,10 +353,8 @@ async def update_topic(
         topic_id=updated_topic.topic_id,
         topic_name=updated_topic.topic_name,
         owner_id=updated_topic.owner_id,
-        is_public=updated_topic.is_public,
         created_at=updated_topic.created_at,
         description=updated_topic.description,
-        allowed_user_ids=updated_topic.allowed_user_ids,
     )
 
 
@@ -364,7 +377,7 @@ async def delete_topic(
     topic_storage = get_topic_storage()
     user_storage = get_user_storage()
 
-    topic = await topic_storage.get_topic(topic_name)
+    topic = await topic_storage.get_topic(current_user.user_id, topic_name)
     if not topic:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -379,7 +392,7 @@ async def delete_topic(
         )
 
     # Delete topic
-    deleted = await topic_storage.delete_topic(topic_name)
+    deleted = await topic_storage.delete_topic(current_user.user_id, topic_name)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -394,188 +407,11 @@ async def delete_topic(
     logger.info(f"Topic deleted: {topic_name} by user {current_user.username}")
 
 
-@router.post("/{topic_name}/permissions", response_model=TopicPermission, status_code=status.HTTP_201_CREATED)
-async def grant_topic_access(
-    topic_name: str,
-    permission_grant: TopicPermissionGrant,
-    current_user: User = Depends(get_current_user),
-) -> TopicPermission:
-    """Grant a user access to a topic (owner only).
-
-    Args:
-        topic_name: Topic name
-        permission_grant: Permission grant data (user_id or username)
-        current_user: Current authenticated user
-
-    Returns:
-        Permission grant record
-
-    Raises:
-        HTTPException: If topic not found, not owner, or user not found
-    """
-    from datetime import datetime, timezone
-
-    topic_storage = get_topic_storage()
-    user_storage = get_user_storage()
-
-    topic = await topic_storage.get_topic(topic_name)
-    if not topic:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Topic '{topic_name}' not found",
-        )
-
-    # Only owner or admin can grant access
-    if topic.owner_id != current_user.user_id and "admin" not in current_user.permissions:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the topic owner can grant access",
-        )
-
-    # Get user to grant access to
-    target_user = None
-    if permission_grant.user_id:
-        target_user = await user_storage.get_user_by_id(permission_grant.user_id)
-    elif permission_grant.username:
-        target_user = await user_storage.get_user_by_username(permission_grant.username)
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Either user_id or username must be provided",
-        )
-
-    if not target_user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
-        )
-
-    # Grant access
-    try:
-        await topic_storage.grant_access(topic_name, target_user.user_id)
-        logger.info(f"Granted access to topic '{topic_name}' for user {target_user.username}")
-
-        return TopicPermission(
-            topic_name=topic_name,
-            user_id=target_user.user_id,
-            username=target_user.username,
-            granted_at=datetime.now(timezone.utc),
-        )
-
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-
-
-@router.delete("/{topic_name}/permissions/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def revoke_topic_access(
-    topic_name: str,
-    user_id: str,
-    current_user: User = Depends(get_current_user),
-) -> None:
-    """Revoke a user's access to a topic (owner only).
-
-    Args:
-        topic_name: Topic name
-        user_id: User ID to revoke access from
-        current_user: Current authenticated user
-
-    Raises:
-        HTTPException: If topic not found or not owner
-    """
-    topic_storage = get_topic_storage()
-
-    topic = await topic_storage.get_topic(topic_name)
-    if not topic:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Topic '{topic_name}' not found",
-        )
-
-    # Only owner or admin can revoke access
-    if topic.owner_id != current_user.user_id and "admin" not in current_user.permissions:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the topic owner can revoke access",
-        )
-
-    # Revoke access
-    revoked = await topic_storage.revoke_access(topic_name, user_id)
-    if not revoked:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User does not have access to this topic",
-        )
-
-    logger.info(f"Revoked access to topic '{topic_name}' for user {user_id}")
-
-
-@router.get("/{topic_name}/permissions", response_model=list[TopicPermission])
-async def list_topic_permissions(
-    topic_name: str,
-    current_user: User = Depends(get_current_user),
-) -> list[TopicPermission]:
-    """List users with access to a topic (owner only).
-
-    Args:
-        topic_name: Topic name
-        current_user: Current authenticated user
-
-    Returns:
-        List of users with access
-
-    Raises:
-        HTTPException: If topic not found or not owner
-    """
-    from datetime import datetime, timezone
-
-    topic_storage = get_topic_storage()
-    user_storage = get_user_storage()
-
-    topic = await topic_storage.get_topic(topic_name)
-    if not topic:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Topic '{topic_name}' not found",
-        )
-
-    # Only owner or admin can list permissions
-    if topic.owner_id != current_user.user_id and "admin" not in current_user.permissions:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the topic owner can list permissions",
-        )
-
-    # Get usernames for all allowed users
-    permissions = []
-    for user_id in topic.allowed_user_ids:
-        user = await user_storage.get_user_by_id(user_id)
-        if user:
-            permissions.append(
-                TopicPermission(
-                    topic_name=topic_name,
-                    user_id=user_id,
-                    username=user.username,
-                    granted_at=datetime.now(timezone.utc),  # We don't track grant time currently
-                )
-            )
-
-    return permissions
-
-
-@router.get("/stats", response_model=dict[str, Any])
-async def get_topic_stats(
-    current_user: User = Depends(require_permission("admin")),
-) -> dict[str, Any]:
-    """Get topic statistics (admin only).
-
-    Args:
-        current_user: Current authenticated admin user
-
-    Returns:
-        Topic statistics
-    """
-    topic_storage = get_topic_storage()
-    return await topic_storage.get_stats()
+# NOTE: The /permissions endpoints (grant_access, revoke_access,
+# list_topic_permissions) were removed in Phase 4 along with the
+# is_public / allowed_user_ids fields. With per-user topic
+# namespacing the wire contract has no way to address a topic
+# outside the bearer's namespace, so cross-user sharing has no
+# reachable code path. A future reintroduction would need a
+# wire mechanism (e.g. ?owner=alice) and a permission model
+# that maps cleanly onto the namespaced storage layer.

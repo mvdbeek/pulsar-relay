@@ -13,12 +13,14 @@ Approval is tied to the OIDC callback in ``pulsar_relay/api/oidc.py``.
 
 from __future__ import annotations
 
+import html
 import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from pulsar_relay.api.limits import limiter
 from pulsar_relay.auth.dependencies import (
     get_device_code_storage,
     get_refresh_token_storage,
@@ -47,6 +49,7 @@ def _rfc8628_error(error: str, *, status_code: int = 400, description: str | Non
 
 
 @router.post("/code")
+@limiter.limit("10/minute")
 async def request_device_code(
     request: Request,
     client_hint: str | None = Form(None),
@@ -96,12 +99,20 @@ async def request_device_code(
 
 
 @router.post("/token")
+@limiter.limit("30/minute")
 async def poll_device_token(
+    request: Request,
     grant_type: str = Form(...),
     device_code: str = Form(...),
     client_id: str | None = Form(None),  # noqa: ARG001 — RFC8628 allows it; we don't validate in v1
 ) -> JSONResponse:
-    """RFC 8628 §3.4: daemon polling endpoint."""
+    """RFC 8628 §3.4: daemon polling endpoint.
+
+    Rate-limited per-IP because the relay's own contract returns
+    ``authorization_pending`` between user-approval attempts and a
+    misbehaving daemon could otherwise hammer the endpoint. 30/min
+    matches the recommended ``interval`` floor of 5s.
+    """
     if grant_type != _RFC8628_GRANT:
         return _rfc8628_error("unsupported_grant_type", description="Use device_code grant.")
 
@@ -222,11 +233,18 @@ _DEVICE_NOT_FOUND_HTML = """<!doctype html>
 
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
-async def device_landing(user_code: str | None = None) -> HTMLResponse:
+@limiter.limit("20/minute")
+async def device_landing(request: Request, user_code: str | None = None) -> HTMLResponse:
     """Operator-facing approval page.
 
     With no ``user_code`` we render a small form prompting for it. Otherwise
     we look up the device session and render provider-selection buttons.
+
+    Rate-limited per-IP because the user_code namespace is only
+    ~8-char × 20-symbol alphabet (~35 bits) — without throttling, a
+    bot net could grind through pending user_codes (Auth H#4). 20/min
+    leaves plenty of headroom for the legitimate one-human-per-flow
+    workflow.
     """
     if not settings.oidc.enabled or not settings.oidc.providers:
         return HTMLResponse(
@@ -241,14 +259,22 @@ async def device_landing(user_code: str | None = None) -> HTMLResponse:
     if record is None or record.status != "pending" or record.expires_at <= _utcnow():
         return HTMLResponse(_DEVICE_NOT_FOUND_HTML, status_code=404)
 
-    hint_html = f'<p class="hint">Requested by: <code>{record.client_hint}</code></p>' if record.client_hint else ""
+    # ``record.client_hint`` is set from the device-flow request body or
+    # the User-Agent header — both attacker-controlled. ``cfg.display_name``
+    # is operator-supplied but goes through the same template so we
+    # escape it too. Escaping ``record.user_code`` is defensive even
+    # though it is constrained to alnum upstream.
+    safe_hint = html.escape(record.client_hint, quote=True) if record.client_hint else ""
+    hint_html = f'<p class="hint">Requested by: <code>{safe_hint}</code></p>' if safe_hint else ""
     buttons = "".join(
-        f'<a href="/auth/oidc/{name}/login?device_user_code={record.user_code}">{cfg.display_name}</a>'
+        f'<a href="/auth/oidc/{html.escape(name, quote=True)}/login?'
+        f'device_user_code={html.escape(record.user_code, quote=True)}">'
+        f"{html.escape(cfg.display_name, quote=True)}</a>"
         for name, cfg in settings.oidc.providers.items()
     )
     return HTMLResponse(
         _DEVICE_PAGE.format(
-            user_code=record.user_code,
+            user_code=html.escape(record.user_code, quote=True),
             hint_html=hint_html,
             provider_buttons=buttons,
         )

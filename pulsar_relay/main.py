@@ -7,13 +7,19 @@ from contextlib import asynccontextmanager
 from typing import Union
 
 from fastapi import FastAPI
-from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from pulsar_relay.api import auth, device, health, messages, oidc, polling, topics, websocket
+from pulsar_relay.auth.denylist import InMemoryJWTDenylist, JWTDenylistStorage, ValkeyJWTDenylist
 from pulsar_relay.auth.dependencies import (
     set_device_code_storage,
+    set_jwt_denylist,
     set_oidc_clients,
     set_oidc_state_storage,
     set_refresh_token_storage,
@@ -25,7 +31,7 @@ from pulsar_relay.auth.device_flow import (
     InMemoryDeviceCodeStorage,
     ValkeyDeviceCodeStorage,
 )
-from pulsar_relay.auth.jwt import hash_password
+from pulsar_relay.auth.jwt import hash_password, verify_password
 from pulsar_relay.auth.models import UserCreate
 from pulsar_relay.auth.oidc_client import OIDCClient
 from pulsar_relay.auth.oidc_state import (
@@ -39,9 +45,19 @@ from pulsar_relay.auth.refresh import (
     ValkeyRefreshTokenStorage,
 )
 from pulsar_relay.auth.storage import InMemoryUserStorage, UserStorage, ValkeyUserStorage
-from pulsar_relay.auth.topic_storage import InMemoryTopicStorage, TopicStorage, ValkeyTopicStorage
-from pulsar_relay.config import settings
+from pulsar_relay.auth.topic_storage import (
+    InMemoryTopicStorage,
+    TopicStorage,
+    ValkeyTopicStorage,
+    scan_for_legacy_keys,
+)
+from pulsar_relay.config import settings, validate_startup_secrets
 from pulsar_relay.core.connections import ConnectionManager
+from pulsar_relay.core.idempotency import (
+    IdempotencyStorage,
+    InMemoryIdempotencyStorage,
+    ValkeyIdempotencyStorage,
+)
 from pulsar_relay.core.polling import PollManager
 from pulsar_relay.core.pubsub import PubSubCoordinator
 from pulsar_relay.storage.memory import MemoryStorage
@@ -64,12 +80,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup: Initialize all services
     log.info("Starting up application...")
 
-    # Refuse to start with the default JWT secret outside of explicit dev runs.
-    if settings.jwt_secret_key == "your-secret-key-here-change-in-production":
-        log.warning(
-            "JWT_SECRET_KEY is set to its insecure default. Set PULSAR_JWT_SECRET_KEY"
-            " before exposing this relay to anyone."
-        )
+    # Refuse to start when secrets are at defaults / unset. Raises
+    # InsecureDefaultsError (a SystemExit subclass) so uvicorn propagates a
+    # clean non-zero exit. Bypassed by PULSAR_ALLOW_INSECURE_DEFAULTS=1.
+    validate_startup_secrets(settings)
 
     # Initialize storage based on configuration
     if settings.storage_backend == "valkey":
@@ -78,13 +92,35 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             host=settings.valkey_host,
             port=settings.valkey_port,
             max_messages_per_topic=settings.max_messages_per_topic,
-            ttl_seconds=settings.persistent_tier_retention,
             use_tls=settings.valkey_use_tls,
+            username=settings.valkey_username,
+            password=settings.valkey_password,
         )
         assert isinstance(storage, ValkeyStorage)
         # Connect to Valkey
         await storage.connect()
         log.info(f"Connected to Valkey at {settings.valkey_host}:{settings.valkey_port}")
+
+        # Scan for pre-namespacing topic keys (API H#5 migration). The
+        # Phase 3c security fix moves topic keys from a flat namespace
+        # (``topic:{name}``) to ``topic:{owner_id}/{name}``. Mixing old
+        # and new shapes silently breaks every storage code path; we
+        # refuse to start when legacy keys are present. Bypassable
+        # via PULSAR_ALLOW_INSECURE_DEFAULTS=1 for local-dev.
+        legacy_keys = await scan_for_legacy_keys(storage._client, limit=20)
+        if legacy_keys:
+            msg = (
+                "Refusing to start: found pre-Phase-3c flat-namespace topic keys in Valkey. "
+                f"Examples: {legacy_keys[:5]}. Topics are now keyed by (owner_id, name). "
+                "Migrate by FLUSHing the topic/stream/meta keys or by re-creating topics "
+                "under each owner. To bypass for local-dev set PULSAR_ALLOW_INSECURE_DEFAULTS=1."
+            )
+            if settings.allow_insecure_defaults:
+                log.warning(msg)
+            else:
+                log.error(msg)
+                raise SystemExit(2)
+
         topic_storage: TopicStorage = ValkeyTopicStorage(storage._client)
         log.info("Initialized Valkey Topic Storage")
         user_storage: UserStorage = ValkeyUserStorage(storage._client)
@@ -92,7 +128,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         refresh_storage: RefreshTokenStorage = ValkeyRefreshTokenStorage(storage._client)
         device_storage: DeviceCodeStorage = ValkeyDeviceCodeStorage(storage._client)
         oidc_state_storage: OIDCStateStorage = ValkeyOIDCStateStorage(storage._client)
-        log.info("Initialized Valkey refresh/device/oidc-state storage")
+        jwt_denylist: JWTDenylistStorage = ValkeyJWTDenylist(storage._client)
+        idempotency_storage: IdempotencyStorage = ValkeyIdempotencyStorage(storage._client)
+        log.info("Initialized Valkey refresh/device/oidc-state/jwt-denylist/idempotency storage")
     else:
         log.info("Using in-memory storage backend")
         storage = MemoryStorage(max_messages_per_topic=settings.max_messages_per_topic)
@@ -104,7 +142,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         refresh_storage = InMemoryRefreshTokenStorage()
         device_storage = InMemoryDeviceCodeStorage()
         oidc_state_storage = InMemoryOIDCStateStorage()
-        log.info("Initialized in-memory refresh/device/oidc-state storage")
+        jwt_denylist = InMemoryJWTDenylist()
+        idempotency_storage = InMemoryIdempotencyStorage()
+        log.info("Initialized in-memory refresh/device/oidc-state/jwt-denylist/idempotency storage")
 
     # Initialize connection manager
     connection_manager = ConnectionManager()
@@ -139,6 +179,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     set_refresh_token_storage(refresh_storage)
     set_device_code_storage(device_storage)
     set_oidc_state_storage(oidc_state_storage)
+    set_jwt_denylist(jwt_denylist)
 
     # Build OIDC clients (one per configured provider). Empty when oidc.enabled=False.
     oidc_clients: dict[str, OIDCClient] = {}
@@ -183,10 +224,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 log.info(f"✅ Bootstrap admin created: {admin_user.username}")
             else:
                 log.info(f"Bootstrap admin already exists: {settings.bootstrap_admin_username}")
-                hashed_password = hash_password(settings.bootstrap_admin_password)
-                if hashed_password != existing_admin.hashed_password:
-                    existing_admin.hashed_password = hashed_password
+                # The previous code compared ``hash_password(plaintext)``
+                # against the stored hash for equality — but the
+                # argon2 hash includes a fresh salt every call, so the
+                # comparison was effectively always-False and the
+                # bootstrap password would be re-hashed and re-stored
+                # on every startup (API M#15). Use ``verify_password``
+                # which compares plaintext to a stored argon2 hash
+                # correctly, and only update when the env-supplied
+                # password no longer matches what's stored.
+                if existing_admin.hashed_password is None or not verify_password(
+                    settings.bootstrap_admin_password, existing_admin.hashed_password
+                ):
+                    existing_admin.hashed_password = hash_password(settings.bootstrap_admin_password)
                     await user_storage.update_user(existing_admin)
+                    log.info("Bootstrap admin password updated from env")
         except Exception as e:
             log.error(f"Failed to create bootstrap admin: {e}")
 
@@ -196,6 +248,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.user_storage = user_storage
     app.state.topic_storage = topic_storage
     app.state.pubsub_coordinator = pubsub_coordinator
+    app.state.idempotency_storage = idempotency_storage
 
     # Inject dependencies into API routers
     messages.set_storage(storage)
@@ -206,119 +259,113 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     topics.set_storage(storage)
     websocket.set_manager(connection_manager)
 
+    # Periodic sweep of stale long-poll waiters. ``cleanup_stale_waiters``
+    # used to be defined but never invoked, so an abandoned waiter sat
+    # in memory forever (API H#8).
+    cleanup_task = asyncio.create_task(poll_manager.cleanup_loop())
+
     log.info("Application startup complete")
 
     yield  # Application is running
 
     # Shutdown: Cleanup resources
     log.info("Shutting down application...")
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
     if pubsub_coordinator:
         await pubsub_coordinator.stop()
     await storage.close()
     log.info("Application shutdown complete")
 
 
-# Build Swagger UI's OAuth2 init parameters from the first configured OIDC
-# provider (if any). Swagger UI only handles a single client_id at a time;
-# callers with multiple providers should pick the one they want via OAuth2's
-# scope picker. PKCE is mandatory because we make code_verifier required on
-# the swagger-token bridge endpoint.
-def _swagger_init_oauth() -> dict:
-    if not settings.oidc.enabled or not settings.oidc.providers:
-        return {}
-    name, provider_cfg = next(iter(settings.oidc.providers.items()))
-    return {
-        "clientId": provider_cfg.client_id,
-        # Confidential client. In a hardened deployment you would proxy the
-        # token exchange through the relay (which we already do via
-        # /auth/oidc/{provider}/swagger-token) and not put the secret in
-        # browser-side JS. Acceptable for /docs as a developer convenience.
-        "clientSecret": provider_cfg.client_secret,
-        "usePkceWithAuthorizationCodeGrant": True,
-        "scopes": " ".join(provider_cfg.scopes),
-        "additionalQueryStringParams": {"_oidc_provider": name},
-    }
-
-
-# Create FastAPI app with lifespan handler
+# Create FastAPI app with lifespan handler.
+# The previous Swagger UI OIDC integration was driven by the now-removed
+# ``/auth/oidc/{provider}/swagger-token`` bridge endpoint. To authenticate
+# Swagger via OIDC, operators should open ``/auth/oidc/{provider}/login``
+# in another tab and paste the resulting access token into Swagger's
+# bearer authorization. The password flow is unchanged.
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     description="High-performance message relay with WebSocket and long-polling support",
     lifespan=lifespan,
-    swagger_ui_init_oauth=_swagger_init_oauth(),
 )
 
+# Wire up the slowapi rate limiter. The module-level Limiter instance
+# lives in pulsar_relay.api.limits so route modules can import it
+# without import cycles; here we attach it to the FastAPI app and
+# register the 429 exception handler. We intentionally do NOT use
+# ``SlowAPIMiddleware`` — it expects a ``Response`` object to inject
+# rate-limit headers and breaks the request flow when used together
+# with the per-route ``@limiter.limit`` decorator (which is what we
+# rely on for enforcement).
+from pulsar_relay.api.limits import limiter  # noqa: E402 — must follow ``app`` creation
 
-def _custom_openapi():
-    """Generate the OpenAPI schema, augmenting it with OIDC auth-code flows.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
-    Each configured OIDC provider becomes a separate ``oauth2`` security
-    scheme. The authorization URL comes from the provider's discovery doc
-    (resolved at startup); the token URL is our own ``swagger-token`` bridge
-    that issues relay JWTs. The existing password flow stays in place so
-    operators can still authenticate as the bootstrap admin.
+
+class BodySizeLimitMiddleware:
+    """Reject HTTP requests whose Content-Length exceeds ``max_bytes``.
+
+    Implemented as a raw ASGI middleware so the rejection happens before
+    the body is buffered by FastAPI / Pydantic — a 100 MiB payload never
+    makes it into memory. WebSocket upgrades are passed through
+    unchanged.
     """
-    if app.openapi_schema:
-        return app.openapi_schema
 
-    schema = get_openapi(
-        title=app.title,
-        version=app.version,
-        description=app.description,
-        routes=app.routes,
-    )
+    def __init__(self, app: ASGIApp, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
 
-    auth_urls = getattr(app.state, "oidc_auth_urls", {}) or {}
-    if auth_urls:
-        components = schema.setdefault("components", {})
-        schemes = components.setdefault("securitySchemes", {})
-        oidc_entries: list[dict] = []
-        for name, auth_url in auth_urls.items():
-            provider_cfg = settings.oidc.providers[name]
-            scheme_name = f"OIDC_{name}"
-            schemes[scheme_name] = {
-                "type": "oauth2",
-                "description": provider_cfg.display_name,
-                "flows": {
-                    "authorizationCode": {
-                        "authorizationUrl": auth_url,
-                        "tokenUrl": f"/auth/oidc/{name}/swagger-token",
-                        "refreshUrl": "/auth/token/refresh",
-                        "scopes": {s: s for s in provider_cfg.scopes},
-                    }
-                },
-            }
-            oidc_entries.append({scheme_name: list(provider_cfg.scopes)})
-
-        # FastAPI emits per-operation ``security`` blocks listing only
-        # OAuth2PasswordBearer (the scheme attached to each endpoint's
-        # dependencies). An OpenAPI top-level ``security`` doesn't help —
-        # operation-level security replaces it. Walk every operation and
-        # offer OIDC_<provider> alongside the password scheme so an
-        # operator can authorize once via either scheme and have Swagger
-        # actually send the token.
-        for path_item in schema.get("paths", {}).values():
-            if not isinstance(path_item, dict):
-                continue
-            for op in path_item.values():
-                if not isinstance(op, dict):
-                    continue
-                op_security = op.get("security")
-                if not op_security:
-                    continue
-                requires_pw = any(isinstance(entry, dict) and "OAuth2PasswordBearer" in entry for entry in op_security)
-                if not requires_pw:
-                    continue
-                for entry in oidc_entries:
-                    if entry not in op_security:
-                        op_security.append(entry)
-
-    app.openapi_schema = schema
-    return schema
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        for name, value in scope.get("headers", ()):
+            if name == b"content-length":
+                try:
+                    declared = int(value)
+                except ValueError:
+                    declared = -1
+                if declared > self.max_bytes:
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": 413,
+                            "headers": [(b"content-type", b"application/json")],
+                        }
+                    )
+                    await send(
+                        {
+                            "type": "http.response.body",
+                            "body": b'{"error":"PAYLOAD_TOO_LARGE","message":"request body exceeds configured limit"}',
+                        }
+                    )
+                    return
+                break
+        await self.app(scope, receive, send)
 
 
-app.openapi = _custom_openapi  # type: ignore[method-assign]
+# Order matters: TrustedHost runs first (cheapest reject), then CORS,
+# then body-size. CORS runs *after* TrustedHost so a hostile Host header
+# is rejected before CORS preflights advertise allowed origins. The
+# body-size middleware runs *inside* CORS so CORS preflights for big
+# requests still get the right CORS headers on the 413 — Starlette nests
+# user_middleware in registration order, with the first .add_middleware
+# call ending up outermost.
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_body_bytes)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.allowed_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts)
 
 
 # Include routers
@@ -337,12 +384,17 @@ Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
-    """Global exception handler."""
+    """Global exception handler.
+
+    Never leaks ``str(exc)`` to clients — internal hostnames, Pydantic
+    field names, and library error strings have been observed in past
+    incidents. Operators get the full traceback via the server logs.
+    """
+    log.exception("Unhandled exception serving %s %s", request.method, request.url.path)
     return JSONResponse(
         status_code=500,
         content={
             "error": "INTERNAL_ERROR",
             "message": "An internal error occurred",
-            "details": str(exc) if settings.log_level == "DEBUG" else None,
         },
     )

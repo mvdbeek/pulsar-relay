@@ -102,17 +102,20 @@ class TestCreateMessage:
 
         assert response.status_code == 422
 
-    async def test_message_persisted_to_storage(self, client):
-        """Test that created message is persisted to storage."""
-        # Create message
+    async def test_message_persisted_to_storage(self, client, auth_storage):
+        """Test that created message is persisted to storage.
+
+        Storage is keyed by ``(owner_id, topic)`` since Phase 3c — the
+        bearer is the test ``user``, so look up the storage under
+        their user_id."""
         response = await client.post("/api/v1/messages", json={"topic": "test-persist", "payload": {"data": "test"}})
 
         assert response.status_code == 201
         message_id = response.json()["message_id"]
 
-        # Verify it's in storage
+        user = await auth_storage.get_user_by_username("user")
         storage = messages.get_storage()
-        stored_messages = await storage.get_messages("test-persist")
+        stored_messages = await storage.get_messages(user.user_id, "test-persist")
 
         assert len(stored_messages) == 1
         assert stored_messages[0]["message_id"] == message_id
@@ -185,7 +188,7 @@ class TestCreateBulkMessages:
 
         assert response.status_code == 422
 
-    async def test_bulk_messages_persisted_to_storage(self, client):
+    async def test_bulk_messages_persisted_to_storage(self, client, auth_storage):
         """Test that bulk messages are persisted to storage."""
         response = await client.post(
             "/api/v1/messages/bulk",
@@ -199,9 +202,10 @@ class TestCreateBulkMessages:
 
         assert response.status_code == 207
 
-        # Verify they're in storage
+        # Verify they're in storage under the bearer's namespace.
+        user = await auth_storage.get_user_by_username("user")
         storage = messages.get_storage()
-        stored_messages = await storage.get_messages("bulk-test", limit=100)
+        stored_messages = await storage.get_messages(user.user_id, "bulk-test", limit=100)
 
         assert len(stored_messages) == 2
         assert stored_messages[0]["payload"] == {"id": 1}
