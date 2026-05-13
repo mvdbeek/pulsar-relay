@@ -20,9 +20,12 @@ Two small jobs:
 
 from __future__ import annotations
 
+import os
 from urllib.parse import quote, urlparse
 
 _LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+INSECURE_BYPASS_ENV_VAR = "PULSAR_RELAY_ALLOW_INSECURE"
 
 
 class RelayURLError(ValueError):
@@ -46,6 +49,12 @@ def normalize_relay_url(url: str, *, allow_insecure_localhost: bool = True) -> s
     * ``https://relay.example.org/api/v1`` (path component — the
       client appends its own paths; concatenation would double up)
     * ``https://relay.example.org?token=abc`` / ``#frag``
+
+    Setting ``PULSAR_RELAY_ALLOW_INSECURE=1`` in the environment
+    disables the plaintext-to-non-localhost rejection. Intended for
+    test harnesses (e.g. fault-injection through a non-TLS proxy)
+    where the operator has explicitly opted in to insecure transport;
+    never enable it in production.
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
@@ -62,10 +71,14 @@ def normalize_relay_url(url: str, *, allow_insecure_localhost: bool = True) -> s
     if parsed.query or parsed.fragment:
         raise RelayURLError("relay_url must not include a query string or fragment")
     if parsed.scheme == "http" and parsed.hostname not in _LOCALHOST_HOSTS:
-        if not allow_insecure_localhost or parsed.hostname not in _LOCALHOST_HOSTS:
+        if os.environ.get(INSECURE_BYPASS_ENV_VAR) != "1":
             raise RelayURLError(
-                f"refusing plaintext http:// to non-localhost host {parsed.hostname!r}; " "use https://"
+                f"refusing plaintext http:// to non-localhost host {parsed.hostname!r}; "
+                f"use https:// (or set {INSECURE_BYPASS_ENV_VAR}=1 for test harnesses "
+                "that explicitly opt in to insecure transport)."
             )
+    if parsed.scheme == "http" and parsed.hostname in _LOCALHOST_HOSTS and not allow_insecure_localhost:
+        raise RelayURLError(f"refusing plaintext http:// to {parsed.hostname!r} (allow_insecure_localhost=False)")
     # Normalize: drop any trailing slash, keep scheme + netloc.
     return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
 
