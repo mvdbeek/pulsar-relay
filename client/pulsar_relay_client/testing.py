@@ -78,8 +78,12 @@ class FakeRelayClient:
         self.created: dict[str, str] = {}
         # External pre-claims that should trigger a TopicOwnershipConflictError.
         self.preclaimed: dict[str, str] = {}
+        # topic_name -> list[StoredMessage-like dict]; tests seed this so
+        # ``fetch_messages`` returns canned responses.
+        self.stored_messages: dict[str, list[dict[str, Any]]] = {}
         self.exchange_calls: list[str] = []
         self.whoami_calls: list[str] = []
+        self.fetch_calls: list[tuple[str, str, int, str, str | None]] = []
 
     def exchange_refresh_token(self, refresh_token: str) -> dict[str, Any]:
         self.exchange_calls.append(refresh_token)
@@ -99,6 +103,50 @@ class FakeRelayClient:
         if existing is not None and existing != self.user_id:
             raise TopicOwnershipConflictError(f"relay topic {topic_name} is owned by another user ({existing!r})")
         self.created[topic_name] = self.user_id
+
+    def fetch_messages(
+        self,
+        access_token: str,
+        topic_name: str,
+        *,
+        limit: int = 10,
+        order: str = "desc",
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """In-memory mirror of :meth:`HttpRelayClient.fetch_messages`.
+
+        Returns a ``PaginatedMessagesResponse``-shaped dict pulling from
+        ``self.stored_messages[topic_name]``. Tests seed messages by
+        appending dicts shaped like ``StoredMessage`` (``message_id``,
+        ``topic``, ``payload``, ``timestamp``, optional ``metadata``)
+        to that list.
+        """
+        self.fetch_calls.append((access_token, topic_name, limit, order, cursor))
+        if order not in ("asc", "desc"):
+            raise ValueError(f"order must be 'asc' or 'desc', got {order!r}")
+        all_messages = list(self.stored_messages.get(topic_name, []))
+        if order == "desc":
+            all_messages.reverse()
+        # Cursor support: ``cursor`` is exclusive — return entries
+        # *after* it in iteration order (which already accounts for
+        # ``order``). Tests that don't care about pagination just leave
+        # cursor=None.
+        if cursor is not None:
+            try:
+                idx = next(i for i, m in enumerate(all_messages) if m.get("message_id") == cursor)
+                all_messages = all_messages[idx + 1 :]
+            except StopIteration:
+                all_messages = []
+        page = all_messages[:limit]
+        next_cursor = page[-1].get("message_id") if len(all_messages) > limit and page else None
+        return {
+            "messages": page,
+            "total": len(page),
+            "limit": limit,
+            "order": order,
+            "cursor": cursor,
+            "next_cursor": next_cursor,
+        }
 
 
 __all__ = ["FakeAuthManager", "FakeRelayClient"]
