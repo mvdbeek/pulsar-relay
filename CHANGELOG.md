@@ -8,6 +8,13 @@ The `pulsar-relay` server (`pyproject.toml`) and the `pulsar-relay-client` SDK (
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-05-14
+
+### Client
+
+#### Added
+- `HttpRelayClient.fetch_messages(access_token, topic_name, *, limit=10, order='desc', cursor=None)` wraps `GET /api/v1/topics/{topic_name}/messages`. Returns the relay's `PaginatedMessagesResponse` body verbatim (`messages`, `total`, `limit`, `order`, `cursor`, `next_cursor`). For "fetch the latest message regardless of age," pair `limit=1` with `order='desc'` — the relay's topic streams have no per-message TTL, so this works as long as the topic hasn't been trimmed past the message. Used by Galaxy's BYOC manager to fetch per-pulsar capability snapshots without subscribing to the topic.
+
 ## [0.2.1] - 2026-05-13
 
 ### Client

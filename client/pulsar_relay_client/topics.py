@@ -67,6 +67,23 @@ class RelayClient(Protocol):
         HTTP failures.
         """
 
+    def fetch_messages(
+        self,
+        access_token: str,
+        topic_name: str,
+        *,
+        limit: int = 10,
+        order: str = "desc",
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """``GET /api/v1/topics/{topic_name}/messages`` — page over the topic stream.
+
+        Returns the relay's ``PaginatedMessagesResponse`` body verbatim
+        (``messages``, ``total``, ``limit``, ``order``, ``cursor``,
+        ``next_cursor``). For "fetch the latest message regardless of
+        age" pair ``limit=1`` with ``order='desc'``.
+        """
+
 
 class HttpRelayClient:
     """Production HTTP client for the relay's token + topic endpoints.
@@ -151,6 +168,37 @@ class HttpRelayClient:
             self._verify_existing_topic_owner(headers, topic_name, my_user_id)
             return
         raise RelayClientError(f"relay topic POST {topic_name} failed: HTTP {resp.status_code}")
+
+    def fetch_messages(
+        self,
+        access_token: str,
+        topic_name: str,
+        *,
+        limit: int = 10,
+        order: str = "desc",
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        if order not in ("asc", "desc"):
+            raise ValueError(f"order must be 'asc' or 'desc', got {order!r}")
+        params: dict[str, Any] = {"limit": limit, "order": order}
+        if cursor is not None:
+            params["cursor"] = cursor
+        url = f"{self.relay_url}/api/v1/topics/{quote_topic(topic_name)}/messages"
+        headers = {"Authorization": f"Bearer {access_token}"}
+        try:
+            resp = self._session.get(url, headers=headers, params=params, timeout=self._timeout)
+        except requests.RequestException as exc:
+            raise RelayClientError(f"relay topic GET {topic_name}/messages failed (network): {exc}") from exc
+        if resp.status_code == 401:
+            raise RefreshTokenRejectedError("relay rejected access token (revoked or expired)")
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            raise RelayClientError(f"relay topic GET {topic_name}/messages failed: HTTP {resp.status_code}") from exc
+        try:
+            return cast(dict[str, Any], resp.json())
+        except ValueError as exc:
+            raise RelayClientError(f"relay returned non-JSON body: {exc}") from exc
 
     def _verify_existing_topic_owner(self, headers: dict[str, str], topic_name: str, expected_owner_id: str) -> None:
         # URL-encode the topic name before it goes into a path segment
