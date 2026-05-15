@@ -17,6 +17,11 @@ The `pulsar-relay` server (`pyproject.toml`) and the `pulsar-relay-client` SDK (
 
 ## [0.2.1] - 2026-05-13
 
+### Server
+
+#### Changed
+- `prometheus-fastapi-instrumentator` is now an optional dependency under the new `[metrics]` extra. Every available version of the instrumentator transitively constrains `starlette<1.0.0`, which blocked downstream installs whose own starlette pin is `>=1.0.0` (e.g. Galaxy) from resolving pulsar-relay at all. The library's `prometheus_client`-based counters/histograms in `pulsar_relay.utils.metrics` continue to record either way; the optional dep only wires those into an auto-exposed `/metrics` FastAPI route. Install `pulsar-relay[metrics]` to keep the previous behaviour. The `dev` extra now depends on `pulsar-relay[metrics]` so the local dev / test workflow still exercises the instrumented path.
+
 ### Client
 
 #### Fixed
