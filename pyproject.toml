@@ -48,7 +48,6 @@ dependencies = [
     "pyjwt>=2.10.1",
     "pydantic>=2.12.0",
     "pydantic-settings>=2.6.1",
-    "prometheus-fastapi-instrumentator>=7.0.0",
     "prometheus-client>=0.21.0",
     "tomli>=2.3.0",
     "pyyaml>=6.0.2",
@@ -59,7 +58,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Auto-instrumented /metrics endpoint. Optional because
+# prometheus-fastapi-instrumentator's transitive dep on starlette<1.0
+# conflicts with starlette 1.0+ in some downstream installs. The
+# library's own ``prometheus_client``-based counters/histograms work
+# without this extra; only the FastAPI ``/metrics`` route disappears
+# when it's not installed.
+metrics = [
+    "prometheus-fastapi-instrumentator>=7.0.0",
+]
 dev = [
+    "pulsar-relay[metrics]",
     "pytest>=8.3.4",
     "pytest-cov>=6.0.0",
     "httpx-ws>=0.6.0,!=0.8.1",
