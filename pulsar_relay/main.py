@@ -8,7 +8,6 @@ from typing import Union
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from prometheus_fastapi_instrumentator import Instrumentator
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.cors import CORSMiddleware
@@ -378,8 +377,22 @@ app.include_router(messages.router)
 app.include_router(websocket.router)
 app.include_router(polling.router, prefix="/messages", tags=["polling"])
 
-# Initialize Prometheus metrics
-Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+# Initialize Prometheus auto-instrumentation + /metrics endpoint when the
+# optional dependency is installed. Skipping it is the supported path for
+# downstream installs whose pinned starlette is incompatible with
+# prometheus-fastapi-instrumentator's transitive constraint — the
+# ``prometheus_client``-based counters/histograms in
+# ``pulsar_relay.utils.metrics`` still record normally; only the
+# auto-exposed ``/metrics`` route disappears.
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+
+    Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+except ImportError:
+    log.info(
+        "prometheus_fastapi_instrumentator not installed; /metrics endpoint disabled. "
+        "Install pulsar-relay[metrics] to enable it."
+    )
 
 
 @app.exception_handler(Exception)
