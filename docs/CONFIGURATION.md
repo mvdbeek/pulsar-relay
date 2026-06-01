@@ -96,6 +96,21 @@ All environment variables are prefixed with `PULSAR_`:
 
 - `PULSAR_LOG_LEVEL` - Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default: "INFO")
 
+### Error Reporting (Sentry)
+
+Optional. Requires the `sentry` extra (`pip install pulsar-relay[sentry]`) and
+is only active when a DSN is set; otherwise these settings are a no-op.
+
+- `PULSAR_SENTRY_DSN` - Sentry DSN. Unset = error reporting disabled (default)
+- `PULSAR_SENTRY_ENVIRONMENT` - Environment tag attached to events, e.g. `production` (default: none)
+- `PULSAR_SENTRY_TRACES_SAMPLE_RATE` - Performance-tracing sample rate, 0.0–1.0 (default: `0.0`, errors only)
+- `PULSAR_SENTRY_SEND_DEFAULT_PII` - Send client IP / request headers to Sentry (default: `false`)
+
+When enabled, unhandled exceptions (HTTP 500s) are reported to Sentry in
+addition to being logged server-side. If `PULSAR_SENTRY_DSN` is set but the
+`sentry` extra isn't installed, the server logs a warning and starts normally
+with reporting disabled.
+
 ### Authentication
 
 - `PULSAR_JWT_SECRET_KEY` - JWT secret key for signing tokens (**CHANGE IN PRODUCTION!**)
