@@ -225,6 +225,31 @@ class Settings(BaseSettings):
         description="Logging level",
     )
 
+    # Error reporting (Sentry) — all optional. Sentry is only initialized
+    # when ``sentry_dsn`` is set AND the optional ``sentry`` extra is
+    # installed (pip install pulsar-relay[sentry]); otherwise it's a no-op.
+    sentry_dsn: Optional[str] = Field(
+        default=None,
+        description="Sentry DSN. When set (and sentry-sdk is installed), "
+        "unhandled exceptions are reported to Sentry. Leave unset to disable.",
+    )
+    sentry_environment: Optional[str] = Field(
+        default=None,
+        description="Environment tag attached to Sentry events (e.g. 'production').",
+    )
+    sentry_traces_sample_rate: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Sentry performance-tracing sample rate (0.0 = errors only, "
+        "the default; 1.0 = trace every request).",
+    )
+    sentry_send_default_pii: bool = Field(
+        default=False,
+        description="Send personally-identifiable information (client IP, request "
+        "headers, cookies) to Sentry. Off by default; opt in explicitly.",
+    )
+
     # Authentication
     jwt_secret_key: str = Field(
         default=_DEFAULT_JWT_SECRET,

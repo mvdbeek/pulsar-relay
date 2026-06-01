@@ -67,8 +67,14 @@ dependencies = [
 metrics = [
     "prometheus-fastapi-instrumentator>=7.0.0",
 ]
+# Optional Sentry error reporting. Only active when both this extra is
+# installed AND PULSAR_SENTRY_DSN is set; otherwise it's a no-op and the
+# server has no dependency on sentry-sdk at all.
+sentry = [
+    "sentry-sdk[fastapi]>=2.0.0",
+]
 dev = [
-    "pulsar-relay[metrics]",
+    "pulsar-relay[metrics,sentry]",
     "pytest>=8.3.4",
     "pytest-cov>=6.0.0",
     "httpx-ws>=0.6.0,!=0.8.1",

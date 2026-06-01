@@ -43,6 +43,16 @@ max_messages_per_topic: 1000000
 log_level: "INFO"
 
 # ============================================================================
+# Error Reporting (Sentry — optional)
+# ============================================================================
+# Requires the optional extra: pip install pulsar-relay[sentry]
+# Active only when sentry_dsn is set; otherwise a no-op.
+# sentry_dsn: ""                      # Sentry DSN; empty = disabled
+# sentry_environment: "production"    # Environment tag on events
+# sentry_traces_sample_rate: 0.0      # 0.0 = errors only (default)
+# sentry_send_default_pii: false      # Send client IP/headers to Sentry
+
+# ============================================================================
 # Authentication
 # ============================================================================
 # IMPORTANT: Change this in production!

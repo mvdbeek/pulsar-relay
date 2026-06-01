@@ -64,6 +64,41 @@ from pulsar_relay.storage.valkey import ValkeyStorage
 
 log = logging.getLogger(__name__)
 
+
+def _init_sentry(config):
+    """Initialize Sentry error reporting if configured.
+
+    Returns the ``sentry_sdk`` module when reporting is active, otherwise
+    ``None``. Reporting is active only when ``config.sentry_dsn`` is set AND
+    the optional ``sentry`` extra is installed (pip install
+    pulsar-relay[sentry]). Sentry's FastAPI/Starlette integration
+    auto-instruments the app as long as ``init`` runs before the app is
+    created, which is why this is called at import time below.
+    """
+    if not config.sentry_dsn:
+        return None
+    try:
+        import sentry_sdk
+    except ImportError:
+        log.warning(
+            "PULSAR_SENTRY_DSN is set but sentry-sdk is not installed; error "
+            "reporting disabled. Install pulsar-relay[sentry] to enable it."
+        )
+        return None
+    sentry_sdk.init(
+        dsn=config.sentry_dsn,
+        environment=config.sentry_environment,
+        traces_sample_rate=config.sentry_traces_sample_rate,
+        send_default_pii=config.sentry_send_default_pii,
+    )
+    log.info("Sentry error reporting enabled (environment=%s)", config.sentry_environment)
+    return sentry_sdk
+
+
+# Set up Sentry before the FastAPI app is created so its integration can
+# instrument the app. ``None`` when unconfigured / sentry-sdk absent.
+_sentry_sdk = _init_sentry(settings)
+
 # Use uvloop for better performance (optional, requires Python <=3.12)
 try:
     import uvloop
@@ -404,6 +439,12 @@ async def global_exception_handler(request, exc):
     incidents. Operators get the full traceback via the server logs.
     """
     log.exception("Unhandled exception serving %s %s", request.method, request.url.path)
+    # Report to Sentry explicitly. The catch-all handler returns a response,
+    # so depending on the Starlette/sentry-sdk versions the integration may
+    # not auto-capture; capturing here is version-independent and Sentry
+    # dedupes events, so there's no double-reporting risk.
+    if _sentry_sdk is not None:
+        _sentry_sdk.capture_exception(exc)
     return JSONResponse(
         status_code=500,
         content={

@@ -376,6 +376,11 @@ See [docs/CONFIGURATION.md](./docs/CONFIGURATION.md) for the full reference.
 - `GET /ready` - Readiness check endpoint (no auth required)
 - `GET /metrics` - Prometheus metrics
 
+### Observability
+
+- **Prometheus metrics**: exposed at `GET /metrics` when the `metrics` extra is installed (`pip install pulsar-relay[metrics]`).
+- **Sentry error reporting** (optional): install the `sentry` extra (`pip install pulsar-relay[sentry]`) and set `PULSAR_SENTRY_DSN` to report unhandled exceptions to Sentry. See [docs/CONFIGURATION.md](./docs/CONFIGURATION.md#error-reporting-sentry) for all `PULSAR_SENTRY_*` options.
+
 ## Performance
 
 ### Benchmarks
