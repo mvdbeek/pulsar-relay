@@ -42,6 +42,19 @@ transport = RelayTransport(
 )
 transport.post_message("job_status_update_my_manager", {"job_id": "j1", "state": "ok"})
 messages = transport.long_poll(["job_setup_my_manager"], timeout=30)
+
+# Competing consumers use the same poll API without advancing cursor state.
+messages = transport.long_poll(
+    ["job_status_update_my_manager"],
+    group="galaxy-job-status-v1",
+    consumer="handler-1:boot-uuid",
+    max_messages=1,
+)
+if messages:
+    delivery = messages[0]["_relay_delivery"]
+    transport.update_group_delivery(delivery, action="touch")
+    # Process and durably commit the application state before acknowledging.
+    transport.update_group_delivery(delivery, action="ack")
 ```
 
 ## Versioning

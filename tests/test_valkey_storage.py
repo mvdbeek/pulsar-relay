@@ -27,6 +27,7 @@ async def valkey_storage():
     )
     # Mock the Glide client
     storage._client = AsyncMock()
+    storage._client.get = AsyncMock(return_value=None)
     storage._connected = True
     return storage
 
@@ -88,6 +89,22 @@ class TestValkeyStorage:
         fields_list = call_args[0][1]
         fields = dict(fields_list)  # Convert to dict for easy verification
         assert "metadata" not in fields
+
+    @pytest.mark.anyio
+    async def test_save_message_does_not_trim_group_stream(self, valkey_storage):
+        """Unread and pending group entries must not be removed by XTRIM."""
+        valkey_storage._client.xadd = AsyncMock(return_value=b"1234567890123-0")
+        valkey_storage._client.get = AsyncMock(return_value=b"galaxy-job-status-v1")
+        valkey_storage._client.xtrim = AsyncMock()
+
+        await valkey_storage.save_message(
+            owner_id=OWNER,
+            topic="job-status",
+            payload={"job_id": "42"},
+            timestamp=datetime(2025, 1, 1, 12, 0, 0),
+        )
+
+        valkey_storage._client.xtrim.assert_not_called()
 
     @pytest.mark.anyio
     async def test_get_messages(self, valkey_storage):
@@ -313,6 +330,182 @@ class TestValkeyStorage:
         assert alice_key != bob_key
         assert "alice" in alice_key
         assert "bob" in bob_key
+
+    @pytest.mark.anyio
+    async def test_poll_group_delivers_fresh_ordered_message(self, valkey_storage):
+        stream_key = f"stream:topic:{OWNER}/job-status"
+        valkey_storage._client.set = AsyncMock(side_effect=[b"OK", b"OK"])
+        valkey_storage._client.xgroup_create = AsyncMock()
+        valkey_storage._client.xautoclaim = AsyncMock(return_value=[b"0-0", {}])
+        valkey_storage._client.xreadgroup = AsyncMock(
+            return_value={
+                stream_key.encode(): {
+                    b"123-0": [
+                        [b"payload", json.dumps({"job_id": "42"}).encode()],
+                        [b"timestamp", b"2025-01-01T12:00:00"],
+                        [
+                            b"metadata",
+                            json.dumps({"ordering_key": "42"}).encode(),
+                        ],
+                    ]
+                }
+            }
+        )
+        valkey_storage._client.xpending_range = AsyncMock(return_value=[])
+
+        messages = await valkey_storage.poll_group(
+            OWNER,
+            ["job-status"],
+            "galaxy-job-status-v1",
+            "handler:boot",
+            1,
+            300,
+        )
+
+        assert [message["message_id"] for message in messages] == ["123-0"]
+        valkey_storage._client.xreadgroup.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_poll_group_releases_blocked_ordered_message_without_timeout(
+        self, valkey_storage
+    ):
+        stream_key = f"stream:topic:{OWNER}/job-status"
+        valkey_storage._client.xpending_range = AsyncMock(
+            return_value=[[b"124-0", b"other-consumer", 10, 1]]
+        )
+        entry = {
+            b"124-0": [
+                [b"payload", json.dumps({"job_id": "42"}).encode()],
+                [b"timestamp", b"2025-01-01T12:00:01"],
+                [b"metadata", json.dumps({"ordering_key": "42"}).encode()],
+            ]
+        }
+        valkey_storage._client.xrange = AsyncMock(return_value=entry)
+        valkey_storage._client.get = AsyncMock(return_value=None)
+        valkey_storage._client.xclaim = AsyncMock(return_value=entry)
+        valkey_storage._client.set = AsyncMock(return_value=b"OK")
+
+        messages = await valkey_storage._claim_unlocked_pending(
+            OWNER,
+            "job-status",
+            "galaxy-job-status-v1",
+            "handler:boot",
+            1,
+            300,
+            set(),
+        )
+
+        assert [message["message_id"] for message in messages] == ["124-0"]
+        valkey_storage._client.xclaim.assert_awaited_once()
+        assert valkey_storage._client.xclaim.call_args.args[:5] == (
+            stream_key,
+            "galaxy-job-status-v1",
+            "handler:boot",
+            0,
+            ["124-0"],
+        )
+
+    @pytest.mark.anyio
+    async def test_ack_writes_terminal_tombstone_before_ack_and_deletes_entry(
+        self, valkey_storage
+    ):
+        stream_key = f"stream:topic:{OWNER}/job-status"
+        events = []
+
+        async def record_tombstone(*args, **kwargs):
+            events.append("tombstone")
+            return b"OK"
+
+        async def record_ack(*args, **kwargs):
+            events.append("ack")
+            return 1
+
+        valkey_storage._client.get = AsyncMock(return_value=b"galaxy-job-status-v1")
+        valkey_storage._client.xpending_range = AsyncMock(
+            return_value=[[b"125-0", b"handler:boot", 10, 1]]
+        )
+        valkey_storage._client.xrange = AsyncMock(
+            return_value={
+                b"125-0": [
+                    [b"payload", json.dumps({"job_id": "42"}).encode()],
+                    [b"timestamp", b"2025-01-01T12:00:02"],
+                    [
+                        b"metadata",
+                        json.dumps(
+                            {
+                                "ordering_key": "42",
+                                "deduplication_key": "job-terminal:42",
+                            }
+                        ).encode(),
+                    ],
+                ]
+            }
+        )
+        valkey_storage._client.set = AsyncMock(side_effect=record_tombstone)
+        valkey_storage._client.xack = AsyncMock(side_effect=record_ack)
+        valkey_storage._client.xdel = AsyncMock(return_value=1)
+        valkey_storage._client.custom_command = AsyncMock(return_value=1)
+
+        updated = await valkey_storage.update_group_deliveries(
+            OWNER,
+            "galaxy-job-status-v1",
+            "handler:boot",
+            [{"topic": "job-status", "message_id": "125-0"}],
+            "ack",
+            300,
+        )
+
+        assert updated == 1
+        assert events == ["tombstone", "ack"]
+        valkey_storage._client.xdel.assert_awaited_once_with(stream_key, ["125-0"])
+
+    @pytest.mark.anyio
+    async def test_touch_requires_and_atomically_renews_ordering_lock(
+        self, valkey_storage
+    ):
+        valkey_storage._client.get = AsyncMock(return_value=b"galaxy-job-status-v1")
+        valkey_storage._client.xpending_range = AsyncMock(
+            return_value=[[b"126-0", b"handler:boot", 10, 1]]
+        )
+        valkey_storage._client.xrange = AsyncMock(
+            return_value={
+                b"126-0": [
+                    [b"payload", json.dumps({"job_id": "42"}).encode()],
+                    [b"timestamp", b"2025-01-01T12:00:03"],
+                    [b"metadata", json.dumps({"ordering_key": "42"}).encode()],
+                ]
+            }
+        )
+        valkey_storage._client.custom_command = AsyncMock(return_value=0)
+        valkey_storage._client.xclaim = AsyncMock()
+
+        updated = await valkey_storage.update_group_deliveries(
+            OWNER,
+            "galaxy-job-status-v1",
+            "handler:boot",
+            [{"topic": "job-status", "message_id": "126-0"}],
+            "touch",
+            300,
+        )
+
+        assert updated == 0
+        valkey_storage._client.xclaim.assert_not_awaited()
+
+        valkey_storage._client.custom_command = AsyncMock(return_value=1)
+        valkey_storage._client.xclaim = AsyncMock(
+            return_value={b"126-0": [[b"payload", b"{}"]]}
+        )
+        updated = await valkey_storage.update_group_deliveries(
+            OWNER,
+            "galaxy-job-status-v1",
+            "handler:boot",
+            [{"topic": "job-status", "message_id": "126-0"}],
+            "touch",
+            300,
+        )
+
+        assert updated == 1
+        valkey_storage._client.xclaim.assert_awaited_once()
 
 
 @pytest.mark.integration

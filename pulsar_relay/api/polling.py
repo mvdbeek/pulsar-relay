@@ -1,7 +1,8 @@
 """Long polling HTTP endpoint as WebSocket fallback."""
 
 import logging
-from typing import Any, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -10,11 +11,13 @@ from pulsar_relay.auth.dependencies import get_current_user, get_topic_storage, 
 from pulsar_relay.auth.models import User
 from pulsar_relay.core.polling import PollManager, PollWaiterLimitExceededError
 from pulsar_relay.models import TopicName
-from pulsar_relay.storage.base import StorageBackend
+from pulsar_relay.storage.base import ConsumerGroupConflictError, StorageBackend
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+GROUP_VISIBILITY_TIMEOUT_SECONDS = 300
+GROUP_NAME_PATTERN = r"^[A-Za-z0-9_.:-]{1,255}$"
 
 
 class PollRequest(BaseModel):
@@ -34,6 +37,35 @@ class PollRequest(BaseModel):
         ge=1,
         le=60,
     )
+    group: Optional[str] = Field(
+        default=None,
+        pattern=GROUP_NAME_PATTERN,
+        description="Competing-consumer group. Omit for legacy cursor/broadcast polling.",
+    )
+    consumer: Optional[str] = Field(
+        default=None,
+        pattern=GROUP_NAME_PATTERN,
+        description="Unique consumer instance name; required with group.",
+    )
+    max_messages: int = Field(
+        default=1,
+        ge=1,
+        le=100,
+        description="Maximum deliveries returned by a grouped poll.",
+    )
+
+
+class GroupDelivery(BaseModel):
+    topic: str
+    message_id: str
+
+
+class GroupPollMetadata(BaseModel):
+    name: str
+    consumer: str
+    visibility_timeout: int
+    lease_expires_at: datetime
+    deliveries: list[GroupDelivery]
 
 
 class PollResponse(BaseModel):
@@ -44,6 +76,21 @@ class PollResponse(BaseModel):
         default=False,
         description="Whether there might be more messages available immediately",
     )
+    group: Optional[GroupPollMetadata] = Field(
+        default=None,
+        description="Consumer-group delivery metadata. Present only for grouped polls.",
+    )
+
+
+class AckRequest(BaseModel):
+    group: str = Field(..., pattern=GROUP_NAME_PATTERN)
+    consumer: str = Field(..., pattern=GROUP_NAME_PATTERN)
+    action: Literal["ack", "touch"] = "ack"
+    deliveries: list[GroupDelivery] = Field(..., min_length=1, max_length=100)
+
+
+class AckResponse(BaseModel):
+    updated: int
 
 
 @router.post("/poll", response_model=PollResponse)
@@ -74,6 +121,10 @@ async def long_poll(
     # Validate topics
     if not poll_request.topics:
         raise HTTPException(status_code=400, detail="At least one topic required")
+    if bool(poll_request.group) != bool(poll_request.consumer):
+        raise HTTPException(status_code=400, detail="group and consumer must be supplied together")
+    if poll_request.group and poll_request.since:
+        raise HTTPException(status_code=400, detail="since cannot be combined with consumer-group polling")
 
     # Validate access to ALL requested topics upfront - fail early if any are denied
     topic_storage = get_topic_storage()
@@ -101,6 +152,63 @@ async def long_poll(
 
     messages = []
     owner_id = current_user.user_id
+
+    if poll_request.group and poll_request.consumer:
+        try:
+            messages = await storage.poll_group(
+                owner_id=owner_id,
+                topics=list(poll_request.topics),
+                group=poll_request.group,
+                consumer=poll_request.consumer,
+                limit=poll_request.max_messages,
+                visibility_timeout=GROUP_VISIBILITY_TIMEOUT_SECONDS,
+            )
+        except ConsumerGroupConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        if not messages:
+            composite_topics = [f"{owner_id}/{t}" for t in poll_request.topics]
+            try:
+                waiter = await poll_manager.create_waiter(composite_topics, user_id=current_user.user_id)
+            except PollWaiterLimitExceededError as exc:
+                raise HTTPException(status_code=429, detail="Too many concurrent poll connections") from exc
+            try:
+                await waiter.wait_for_messages(timeout=float(poll_request.timeout))
+            finally:
+                await poll_manager.remove_waiter(waiter.client_id)
+            try:
+                messages = await storage.poll_group(
+                    owner_id=owner_id,
+                    topics=list(poll_request.topics),
+                    group=poll_request.group,
+                    consumer=poll_request.consumer,
+                    limit=poll_request.max_messages,
+                    visibility_timeout=GROUP_VISIBILITY_TIMEOUT_SECONDS,
+                )
+            except ConsumerGroupConflictError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        deliveries = [
+            GroupDelivery(topic=message["topic"], message_id=message["message_id"])
+            for message in messages
+        ]
+        group_metadata = GroupPollMetadata(
+            name=poll_request.group,
+            consumer=poll_request.consumer,
+            visibility_timeout=GROUP_VISIBILITY_TIMEOUT_SECONDS,
+            lease_expires_at=datetime.now(timezone.utc)
+            + timedelta(seconds=GROUP_VISIBILITY_TIMEOUT_SECONDS),
+            deliveries=deliveries,
+        )
+        return PollResponse(
+            messages=messages,
+            has_more=len(messages) >= poll_request.max_messages,
+            group=group_metadata,
+        )
+
+    for topic in poll_request.topics:
+        if await storage.get_consumer_group(owner_id, topic):
+            raise HTTPException(status_code=409, detail="Topic is assigned to a consumer group")
 
     # First, check for any recent messages the client hasn't seen
     if poll_request.since:
@@ -157,6 +265,39 @@ async def long_poll(
         await poll_manager.remove_waiter(waiter.client_id)
 
     return PollResponse(messages=messages, has_more=False)
+
+
+@router.post("/ack", response_model=AckResponse)
+async def acknowledge_group_deliveries(
+    ack_request: AckRequest,
+    request: Request,
+    current_user: User = Depends(require_permission("read")),
+) -> AckResponse:
+    """Acknowledge completed deliveries or renew their visibility lease."""
+    topic_storage = get_topic_storage()
+    for delivery in ack_request.deliveries:
+        can_access = await topic_storage.user_can_access(
+            owner_id=current_user.user_id,
+            topic_name=delivery.topic,
+            user_id=current_user.user_id,
+            permission_type="read",
+            user_permissions=current_user.permissions,
+        )
+        if not can_access:
+            raise HTTPException(status_code=403, detail="Access denied to one or more requested topics")
+    storage: StorageBackend = request.app.state.storage
+    try:
+        updated = await storage.update_group_deliveries(
+            owner_id=current_user.user_id,
+            group=ack_request.group,
+            consumer=ack_request.consumer,
+            deliveries=[delivery.model_dump() for delivery in ack_request.deliveries],
+            action=ack_request.action,
+            visibility_timeout=GROUP_VISIBILITY_TIMEOUT_SECONDS,
+        )
+    except ConsumerGroupConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return AckResponse(updated=updated)
 
 
 @router.get("/poll/stats")

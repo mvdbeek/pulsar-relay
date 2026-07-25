@@ -5,6 +5,10 @@ from datetime import datetime
 from typing import Any, Optional
 
 
+class ConsumerGroupConflictError(Exception):
+    """Raised when a topic is already bound to another delivery mode/group."""
+
+
 class StorageBackend(ABC):
     """Abstract base class for storage backends."""
 
@@ -50,6 +54,41 @@ class StorageBackend(ABC):
     @abstractmethod
     async def get_topic_length(self, owner_id: str, topic: str) -> int:
         """Get the number of messages in a topic."""
+        pass
+
+    @abstractmethod
+    async def get_consumer_group(self, owner_id: str, topic: str) -> Optional[str]:
+        """Return the exclusive consumer group bound to a topic, if any."""
+        pass
+
+    @abstractmethod
+    async def poll_group(
+        self,
+        owner_id: str,
+        topics: list[str],
+        group: str,
+        consumer: str,
+        limit: int,
+        visibility_timeout: int,
+    ) -> list[dict[str, Any]]:
+        """Claim messages for a competing consumer.
+
+        Returned messages remain pending until :meth:`update_group_deliveries`
+        acknowledges them. Expired pending deliveries may be reassigned.
+        """
+        pass
+
+    @abstractmethod
+    async def update_group_deliveries(
+        self,
+        owner_id: str,
+        group: str,
+        consumer: str,
+        deliveries: list[dict[str, str]],
+        action: str,
+        visibility_timeout: int,
+    ) -> int:
+        """Acknowledge or renew group deliveries owned by ``consumer``."""
         pass
 
     @abstractmethod

@@ -373,6 +373,131 @@ class TestPollingEndpoint:
         assert isinstance(data["messages"], list)
 
     @pytest.mark.anyio
+    async def test_grouped_poll_competes_and_requires_ack(
+        self, test_storage, test_client, auth_token, auth_storage
+    ):
+        user = await auth_storage.get_user_by_username("user")
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        poll_body = {
+            "topics": ["job-status"],
+            "group": "galaxy-job-status-v1",
+            "consumer": "handler-a:boot-1",
+            "max_messages": 1,
+            "timeout": 1,
+        }
+
+        # The first grouped poll establishes the group at the current tail.
+        assert test_client.post("/messages/poll", json=poll_body, headers=headers).status_code == 200
+        message_id = await test_storage.save_message(
+            user.user_id,
+            "job-status",
+            {"job_id": "42", "status": "complete"},
+            datetime.datetime.now(datetime.timezone.utc),
+            metadata={
+                "ordering_key": "42",
+                "deduplication_key": "job-terminal:42",
+            },
+        )
+
+        response = test_client.post("/messages/poll", json=poll_body, headers=headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["messages"][0]["message_id"] == message_id
+        assert data["group"]["name"] == "galaxy-job-status-v1"
+        assert data["group"]["deliveries"] == [{"topic": "job-status", "message_id": message_id}]
+
+        # Another consumer cannot see the still-leased delivery.
+        competing = {
+            **poll_body,
+            "consumer": "handler-b:boot-2",
+        }
+        response = test_client.post("/messages/poll", json=competing, headers=headers)
+        assert response.status_code == 200
+        assert response.json()["messages"] == []
+
+        ack = test_client.post(
+            "/messages/ack",
+            json={
+                "group": poll_body["group"],
+                "consumer": poll_body["consumer"],
+                "action": "ack",
+                "deliveries": [{"topic": "job-status", "message_id": message_id}],
+            },
+            headers=headers,
+        )
+        assert ack.status_code == 200
+        assert ack.json() == {"updated": 1}
+
+    @pytest.mark.anyio
+    async def test_grouped_topic_rejects_legacy_and_other_group(
+        self, test_client, auth_token
+    ):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        grouped = {
+            "topics": ["exclusive-status"],
+            "group": "galaxy-job-status-v1",
+            "consumer": "handler-a:boot-1",
+            "timeout": 1,
+        }
+        assert test_client.post("/messages/poll", json=grouped, headers=headers).status_code == 200
+
+        legacy = test_client.post(
+            "/messages/poll",
+            json={"topics": ["exclusive-status"], "timeout": 1},
+            headers=headers,
+        )
+        assert legacy.status_code == 409
+
+        other_group = test_client.post(
+            "/messages/poll",
+            json={**grouped, "group": "another-group"},
+            headers=headers,
+        )
+        assert other_group.status_code == 409
+
+    @pytest.mark.anyio
+    async def test_memory_group_orders_same_job_and_coalesces_terminal_duplicates(
+        self, test_storage, auth_storage
+    ):
+        user = await auth_storage.get_user_by_username("user")
+        owner_id = user.user_id
+        topic = "ordered-status"
+        group = "galaxy-job-status-v1"
+        await test_storage.poll_group(owner_id, [topic], group, "a", 1, 300)
+        metadata = {
+            "ordering_key": "job-1",
+            "deduplication_key": "job-terminal:job-1",
+        }
+        first = await test_storage.save_message(
+            owner_id,
+            topic,
+            {"job_id": "job-1", "status": "complete"},
+            datetime.datetime.now(datetime.timezone.utc),
+            metadata,
+        )
+        await test_storage.save_message(
+            owner_id,
+            topic,
+            {"job_id": "job-1", "status": "complete"},
+            datetime.datetime.now(datetime.timezone.utc),
+            metadata,
+        )
+        claimed = await test_storage.poll_group(owner_id, [topic], group, "a", 10, 300)
+        assert [message["message_id"] for message in claimed] == [first]
+        assert (
+            await test_storage.update_group_deliveries(
+                owner_id,
+                group,
+                "a",
+                [{"topic": topic, "message_id": first}],
+                "ack",
+                300,
+            )
+            == 1
+        )
+        assert await test_storage.poll_group(owner_id, [topic], group, "b", 10, 300) == []
+
+    @pytest.mark.anyio
     async def test_poll_other_users_topic_is_isolated(self, test_client, auth_token, auth_storage):
         """Under per-user topic namespacing (Phase 3c, API H#5) the
         bearer's poll resolves to ``(bearer.sub, topic_name)`` —

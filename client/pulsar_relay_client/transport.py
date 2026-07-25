@@ -308,6 +308,9 @@ class RelayTransport:
         self,
         topics: list[str],
         timeout: int = 30,
+        group: str | None = None,
+        consumer: str | None = None,
+        max_messages: int = 1,
     ) -> list[dict[str, Any]]:
         """Poll for messages from specified topics.
 
@@ -318,6 +321,9 @@ class RelayTransport:
         Args:
             topics: List of topic names to subscribe to
             timeout: Maximum seconds to wait for messages (1-60)
+            group: Optional competing-consumer group.
+            consumer: Unique consumer instance; required with ``group``.
+            max_messages: Maximum grouped deliveries to return.
 
         Returns:
             List of message dictionaries
@@ -328,13 +334,22 @@ class RelayTransport:
         url = f"{self.relay_url}/messages/poll"
 
         poll_data: dict[str, Any] = {"topics": topics, "timeout": min(max(timeout, 1), 60)}  # Clamp to 1-60 range
+        if bool(group) != bool(consumer):
+            raise ValueError("group and consumer must be supplied together")
+        if group and consumer:
+            poll_data.update(
+                group=group,
+                consumer=consumer,
+                max_messages=max(1, min(max_messages, 100)),
+            )
 
         # Build since dict from tracked message IDs for requested topics
         tracked_since: dict[str, str] = {}
-        for topic in topics:
-            msg_id = self.get_last_message_id(topic)
-            if msg_id is not None:
-                tracked_since[topic] = msg_id
+        if not group:
+            for topic in topics:
+                msg_id = self.get_last_message_id(topic)
+                if msg_id is not None:
+                    tracked_since[topic] = msg_id
         if tracked_since:
             poll_data["since"] = tracked_since
             log.debug("Using tracked message IDs for poll: %s", tracked_since)
@@ -352,13 +367,30 @@ class RelayTransport:
             result = response.json()
 
             messages = result.get("messages") or []
+            group_metadata = result.get("group")
+            if group_metadata:
+                delivery_ids = {
+                    (delivery["topic"], delivery["message_id"])
+                    for delivery in group_metadata.get("deliveries", [])
+                }
+                for message in messages:
+                    delivery_key = (message.get("topic"), message.get("message_id"))
+                    if delivery_key in delivery_ids:
+                        message["_relay_delivery"] = {
+                            "group": group_metadata["name"],
+                            "consumer": group_metadata["consumer"],
+                            "topic": delivery_key[0],
+                            "message_id": delivery_key[1],
+                            "lease_expires_at": group_metadata.get("lease_expires_at"),
+                        }
 
             # Track the last message ID per topic
-            for message in messages:
-                topic = message.get("topic")
-                message_id = message.get("message_id")
-                if topic and message_id:
-                    self.set_last_message_id(topic, message_id)
+            if not group:
+                for message in messages:
+                    topic = message.get("topic")
+                    message_id = message.get("message_id")
+                    if topic and message_id:
+                        self.set_last_message_id(topic, message_id)
 
             # Build dict of tracked IDs for the requested topics
             tracked_ids: dict[str, str] = {}
@@ -378,6 +410,43 @@ class RelayTransport:
         except requests.RequestException as e:
             log.error("Failed to long poll: %s", e)
             raise RelayTransportError(f"Failed to long poll: {e}")
+
+    def update_group_delivery(self, delivery: dict[str, Any], action: str = "ack") -> bool:
+        """Acknowledge a delivery or renew its visibility lease.
+
+        Returns ``False`` for a lost ``touch`` lease. A zero-count ``ack`` is
+        treated as successful because acknowledgements are idempotent.
+        """
+        if action not in {"ack", "touch"}:
+            raise ValueError("action must be 'ack' or 'touch'")
+        url = f"{self.relay_url}/messages/ack"
+        request_data = {
+            "group": delivery["group"],
+            "consumer": delivery["consumer"],
+            "action": action,
+            "deliveries": [
+                {
+                    "topic": delivery["topic"],
+                    "message_id": delivery["message_id"],
+                }
+            ],
+        }
+
+        def _post() -> requests.Response:
+            return self.session.post(
+                url,
+                json=request_data,
+                headers=self._get_headers(),
+                timeout=self.timeout,
+            )
+
+        response = self._retry_with_backoff(_post, f"group_delivery_{action}")
+        if response.status_code == 401:
+            self.auth_manager.invalidate()
+            response = self._retry_with_backoff(_post, f"group_delivery_{action}")
+        response.raise_for_status()
+        updated = int(response.json().get("updated", 0))
+        return action == "ack" or updated == 1
 
     def get_last_message_id(self, topic: str) -> str | None:
         """Get the last tracked message ID for a topic.

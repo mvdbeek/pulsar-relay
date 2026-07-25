@@ -251,6 +251,19 @@ poll();
 
 **Note**: Requires `read` permission and appropriate topic access. The `since` parameter automatically handles message acknowledgment by tracking which messages you've already received.
 
+#### Competing Consumers
+
+Add `group`, `consumer`, and optionally `max_messages` to the existing
+`POST /messages/poll` request when exactly one active consumer should receive
+each message. The response's optional `group` field identifies the deliveries
+and their lease expiry. Complete work with `POST /messages/ack` using
+`action: "ack"`, or renew a long-running delivery with `action: "touch"`.
+
+A topic is permanently bound to the first consumer group that polls it.
+Subsequent cursor-style polls or a different group receive `409 Conflict`.
+Groups begin at the topic's current tail, so establish the group before
+publishing work or perform an application-level recovery sweep during cutover.
+
 ### Topic Management
 
 Topics control access to message streams. Users with `write` permission can create topics, and topic owners can manage access.
@@ -368,6 +381,7 @@ See [docs/CONFIGURATION.md](./docs/CONFIGURATION.md) for the full reference.
 
 - `GET /ws` - WebSocket connection endpoint (query param: `token`)
 - `POST /messages/poll` - Long-polling endpoint for message retrieval
+- `POST /messages/ack` - Acknowledge or renew consumer-group deliveries
 - `GET /messages/poll/stats` - Poll client statistics
 
 ### Management API
