@@ -150,10 +150,7 @@ class ValkeyStorage(StorageBackend):
         if not stream_entries:
             return messages
         for entry_id_bytes, field_value_list in stream_entries.items():
-            fields = {
-                pair[0].decode("utf-8"): pair[1].decode("utf-8")
-                for pair in field_value_list
-            }
+            fields = {pair[0].decode("utf-8"): pair[1].decode("utf-8") for pair in field_value_list}
             stream_id = entry_id_bytes.decode("utf-8")
             messages.append(
                 {
@@ -344,9 +341,7 @@ class ValkeyStorage(StorageBackend):
         )
         bound_group = group if claimed else await self.get_consumer_group(owner_id, topic)
         if bound_group != group:
-            raise ConsumerGroupConflictError(
-                f"Topic {topic!r} is already assigned to consumer group {bound_group!r}"
-            )
+            raise ConsumerGroupConflictError(f"Topic {topic!r} is already assigned to consumer group {bound_group!r}")
         try:
             # "$" deliberately starts at the current tail. Galaxy performs a
             # status sweep during the coordinated cutover.
@@ -435,16 +430,10 @@ class ValkeyStorage(StorageBackend):
             if len(claimed) >= limit:
                 break
             raw_message_id = pending_entry[0]
-            message_id = (
-                raw_message_id.decode("utf-8")
-                if isinstance(raw_message_id, bytes)
-                else str(raw_message_id)
-            )
+            message_id = raw_message_id.decode("utf-8") if isinstance(raw_message_id, bytes) else str(raw_message_id)
             if message_id in excluded_message_ids:
                 continue
-            entry = await self._client.xrange(
-                stream_key, IdBound(message_id), IdBound(message_id), count=1
-            )
+            entry = await self._client.xrange(stream_key, IdBound(message_id), IdBound(message_id), count=1)
             decoded = self._decode_entries(topic, entry)
             if not decoded:
                 continue
@@ -468,9 +457,7 @@ class ValkeyStorage(StorageBackend):
             if not transferred_messages:
                 continue
             transferred_message = transferred_messages[0]
-            if await self._claim_ordering_key(
-                owner_id, topic, group, transferred_message, visibility_timeout
-            ):
+            if await self._claim_ordering_key(owner_id, topic, group, transferred_message, visibility_timeout):
                 claimed.append(transferred_message)
         return claimed
 
@@ -501,11 +488,7 @@ class ValkeyStorage(StorageBackend):
                 "0-0",
                 count=remaining,
             )
-            reclaimed_entries = (
-                reclaimed[1]
-                if len(reclaimed) > 1 and isinstance(reclaimed[1], Mapping)
-                else {}
-            )
+            reclaimed_entries = reclaimed[1] if len(reclaimed) > 1 and isinstance(reclaimed[1], Mapping) else {}
             candidates = self._decode_entries(topic, reclaimed_entries)
 
             remaining -= len(candidates)
@@ -522,9 +505,7 @@ class ValkeyStorage(StorageBackend):
 
             candidate_ids = {message["message_id"] for message in candidates}
             for message in candidates:
-                if await self._claim_ordering_key(
-                    owner_id, topic, group, message, visibility_timeout
-                ):
+                if await self._claim_ordering_key(owner_id, topic, group, message, visibility_timeout):
                     messages.append(message)
                     if len(messages) >= limit:
                         break
@@ -542,9 +523,7 @@ class ValkeyStorage(StorageBackend):
                 )
         return messages
 
-    async def _delivery_owned_by(
-        self, stream_key: str, group: str, consumer: str, message_id: str
-    ) -> bool:
+    async def _delivery_owned_by(self, stream_key: str, group: str, consumer: str, message_id: str) -> bool:
         assert self._client is not None
         pending = await self._client.xpending_range(
             stream_key,
@@ -558,9 +537,7 @@ class ValkeyStorage(StorageBackend):
             return False
         raw_message_id = pending[0][0]
         pending_message_id = (
-            raw_message_id.decode("utf-8")
-            if isinstance(raw_message_id, bytes)
-            else str(raw_message_id)
+            raw_message_id.decode("utf-8") if isinstance(raw_message_id, bytes) else str(raw_message_id)
         )
         return pending_message_id == message_id
 
@@ -584,20 +561,14 @@ class ValkeyStorage(StorageBackend):
             stream_key = self._get_stream_key(owner_id, topic)
             if not await self._delivery_owned_by(stream_key, group, consumer, message_id):
                 continue
-            entry = await self._client.xrange(
-                stream_key, IdBound(message_id), IdBound(message_id), count=1
-            )
+            entry = await self._client.xrange(stream_key, IdBound(message_id), IdBound(message_id), count=1)
             decoded = self._decode_entries(topic, entry)
             if not decoded:
                 continue
             message = decoded[0]
             metadata = message.get("metadata") or {}
             ordering_key = metadata.get("ordering_key")
-            lock_key = (
-                self._get_ordering_lock_key(owner_id, topic, group, ordering_key)
-                if ordering_key
-                else None
-            )
+            lock_key = self._get_ordering_lock_key(owner_id, topic, group, ordering_key) if ordering_key else None
             if action == "touch":
                 if lock_key:
                     renewed = await self._client.custom_command(

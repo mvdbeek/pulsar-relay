@@ -188,16 +188,12 @@ async def long_poll(
             except ConsumerGroupConflictError as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-        deliveries = [
-            GroupDelivery(topic=message["topic"], message_id=message["message_id"])
-            for message in messages
-        ]
+        deliveries = [GroupDelivery(topic=message["topic"], message_id=message["message_id"]) for message in messages]
         group_metadata = GroupPollMetadata(
             name=poll_request.group,
             consumer=poll_request.consumer,
             visibility_timeout=GROUP_VISIBILITY_TIMEOUT_SECONDS,
-            lease_expires_at=datetime.now(timezone.utc)
-            + timedelta(seconds=GROUP_VISIBILITY_TIMEOUT_SECONDS),
+            lease_expires_at=datetime.now(timezone.utc) + timedelta(seconds=GROUP_VISIBILITY_TIMEOUT_SECONDS),
             deliveries=deliveries,
         )
         return PollResponse(

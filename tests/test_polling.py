@@ -373,9 +373,7 @@ class TestPollingEndpoint:
         assert isinstance(data["messages"], list)
 
     @pytest.mark.anyio
-    async def test_grouped_poll_competes_and_requires_ack(
-        self, test_storage, test_client, auth_token, auth_storage
-    ):
+    async def test_grouped_poll_competes_and_requires_ack(self, test_storage, test_client, auth_token, auth_storage):
         user = await auth_storage.get_user_by_username("user")
         headers = {"Authorization": f"Bearer {auth_token}"}
         poll_body = {
@@ -429,9 +427,7 @@ class TestPollingEndpoint:
         assert ack.json() == {"updated": 1}
 
     @pytest.mark.anyio
-    async def test_grouped_topic_rejects_legacy_and_other_group(
-        self, test_client, auth_token
-    ):
+    async def test_grouped_topic_rejects_legacy_and_other_group(self, test_client, auth_token):
         headers = {"Authorization": f"Bearer {auth_token}"}
         grouped = {
             "topics": ["exclusive-status"],
@@ -456,9 +452,7 @@ class TestPollingEndpoint:
         assert other_group.status_code == 409
 
     @pytest.mark.anyio
-    async def test_memory_group_orders_same_job_and_coalesces_terminal_duplicates(
-        self, test_storage, auth_storage
-    ):
+    async def test_memory_group_orders_same_job_and_coalesces_terminal_duplicates(self, test_storage, auth_storage):
         user = await auth_storage.get_user_by_username("user")
         owner_id = user.user_id
         topic = "ordered-status"

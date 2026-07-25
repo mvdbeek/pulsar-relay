@@ -366,13 +366,9 @@ class TestValkeyStorage:
         valkey_storage._client.xreadgroup.assert_awaited_once()
 
     @pytest.mark.anyio
-    async def test_poll_group_releases_blocked_ordered_message_without_timeout(
-        self, valkey_storage
-    ):
+    async def test_poll_group_releases_blocked_ordered_message_without_timeout(self, valkey_storage):
         stream_key = f"stream:topic:{OWNER}/job-status"
-        valkey_storage._client.xpending_range = AsyncMock(
-            return_value=[[b"124-0", b"other-consumer", 10, 1]]
-        )
+        valkey_storage._client.xpending_range = AsyncMock(return_value=[[b"124-0", b"other-consumer", 10, 1]])
         entry = {
             b"124-0": [
                 [b"payload", json.dumps({"job_id": "42"}).encode()],
@@ -406,9 +402,7 @@ class TestValkeyStorage:
         )
 
     @pytest.mark.anyio
-    async def test_ack_writes_terminal_tombstone_before_ack_and_deletes_entry(
-        self, valkey_storage
-    ):
+    async def test_ack_writes_terminal_tombstone_before_ack_and_deletes_entry(self, valkey_storage):
         stream_key = f"stream:topic:{OWNER}/job-status"
         events = []
 
@@ -421,9 +415,7 @@ class TestValkeyStorage:
             return 1
 
         valkey_storage._client.get = AsyncMock(return_value=b"galaxy-job-status-v1")
-        valkey_storage._client.xpending_range = AsyncMock(
-            return_value=[[b"125-0", b"handler:boot", 10, 1]]
-        )
+        valkey_storage._client.xpending_range = AsyncMock(return_value=[[b"125-0", b"handler:boot", 10, 1]])
         valkey_storage._client.xrange = AsyncMock(
             return_value={
                 b"125-0": [
@@ -460,13 +452,9 @@ class TestValkeyStorage:
         valkey_storage._client.xdel.assert_awaited_once_with(stream_key, ["125-0"])
 
     @pytest.mark.anyio
-    async def test_touch_requires_and_atomically_renews_ordering_lock(
-        self, valkey_storage
-    ):
+    async def test_touch_requires_and_atomically_renews_ordering_lock(self, valkey_storage):
         valkey_storage._client.get = AsyncMock(return_value=b"galaxy-job-status-v1")
-        valkey_storage._client.xpending_range = AsyncMock(
-            return_value=[[b"126-0", b"handler:boot", 10, 1]]
-        )
+        valkey_storage._client.xpending_range = AsyncMock(return_value=[[b"126-0", b"handler:boot", 10, 1]])
         valkey_storage._client.xrange = AsyncMock(
             return_value={
                 b"126-0": [
@@ -492,9 +480,7 @@ class TestValkeyStorage:
         valkey_storage._client.xclaim.assert_not_awaited()
 
         valkey_storage._client.custom_command = AsyncMock(return_value=1)
-        valkey_storage._client.xclaim = AsyncMock(
-            return_value={b"126-0": [[b"payload", b"{}"]]}
-        )
+        valkey_storage._client.xclaim = AsyncMock(return_value={b"126-0": [[b"payload", b"{}"]]})
         updated = await valkey_storage.update_group_deliveries(
             OWNER,
             "galaxy-job-status-v1",

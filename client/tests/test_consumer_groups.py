@@ -1,7 +1,6 @@
 """Consumer-group wire contract tests."""
 
 import responses
-
 from pulsar_relay_client import RelayTransport
 from pulsar_relay_client.testing import FakeAuthManager
 

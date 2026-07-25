@@ -14,7 +14,7 @@ import tempfile
 import threading
 import time
 import uuid
-from typing import Any, Callable, cast
+from typing import Any, Callable, Protocol, cast
 
 import requests
 
@@ -22,6 +22,12 @@ from ._url import normalize_relay_url
 from .auth import RelayAuthManager
 
 log = logging.getLogger(__name__)
+
+
+class _AuthManager(Protocol):
+    def get_token(self) -> str: ...
+
+    def invalidate(self) -> None: ...
 
 
 class RelayTransportError(Exception):
@@ -47,7 +53,7 @@ class RelayTransport:
         timeout: int = 30,
         cursor_path: str | None = None,
         credentials_file: str | None = None,
-        auth_manager: RelayAuthManager | None = None,
+        auth_manager: _AuthManager | None = None,
         session: requests.Session | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -70,8 +76,9 @@ class RelayTransport:
                 by ``pulsar-config --login``. When present, the transport
                 uses the rotating-refresh-token flow and ignores
                 ``username``/``password``.
-            auth_manager: Pre-built ``RelayAuthManager`` instance, useful
-                for tests and advanced configurations.
+            auth_manager: Authentication manager compatible with
+                ``RelayAuthManager``, useful for tests and advanced
+                configurations.
             session: Optional pre-configured :class:`requests.Session`.
                 Embedders that need custom CA bundles, retry adapters,
                 proxies, or instrumentation should pass one in. If
@@ -82,6 +89,7 @@ class RelayTransport:
                 on the wall clock.
         """
         self.relay_url = normalize_relay_url(relay_url)
+        self.auth_manager: _AuthManager
         if auth_manager is not None:
             self.auth_manager = auth_manager
         else:
@@ -370,8 +378,7 @@ class RelayTransport:
             group_metadata = result.get("group")
             if group_metadata:
                 delivery_ids = {
-                    (delivery["topic"], delivery["message_id"])
-                    for delivery in group_metadata.get("deliveries", [])
+                    (delivery["topic"], delivery["message_id"]) for delivery in group_metadata.get("deliveries", [])
                 }
                 for message in messages:
                     delivery_key = (message.get("topic"), message.get("message_id"))
