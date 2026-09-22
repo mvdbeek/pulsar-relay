@@ -209,9 +209,10 @@ class Settings(BaseSettings):
 
     # Storage Configuration
     persistent_tier_retention: int = Field(
-        default=86400,
-        description="Persistent tier retention in seconds (Valkey)",
-        ge=1,
+        default=0,
+        description="Drop Valkey messages older than this many seconds; 0 disables age-based retention "
+        "(streams are then bounded only by max_messages_per_topic)",
+        ge=0,
     )
     max_messages_per_topic: int = Field(
         default=1000000,

@@ -8,6 +8,16 @@ The `pulsar-relay` server (`pyproject.toml`) and the `pulsar-relay-client` SDK (
 
 ## [Unreleased]
 
+### Server
+
+#### Added
+- `persistent_tier_retention` is now enforced (it was previously accepted but ignored). When set to a positive number of seconds, every publish trims stream entries older than the window and sets an expiry on the topic's stream, and reads never return messages older than the window. The default changes from `86400` to `0` (disabled), which preserves the existing behaviour: streams are bounded only by `max_messages_per_topic`, and the latest message of an idle topic stays readable regardless of age.
+- Startup refuses to boot when the connected Valkey has `maxmemory` set with any `maxmemory-policy` other than `noeviction`, since eviction can silently delete users, topics, access grants and JWT denylist entries (re-enabling revoked tokens). Bypassable with `PULSAR_ALLOW_INSECURE_DEFAULTS=1`.
+
+#### Changed
+- The bundled `valkey.conf` uses `maxmemory-policy noeviction` instead of `allkeys-lru`.
+- `docs/CONFIGURATION.md` documents what the relay stores in Valkey and the Valkey requirements (eviction policy, sizing, persistence).
+
 ## [0.2.2] - 2026-05-14
 
 ### Client

@@ -30,8 +30,9 @@ valkey_use_tls = false
 # ============================================================================
 # Storage Configuration
 # ============================================================================
-# Persistent tier retention in seconds (Valkey)
-persistent_tier_retention = 86400  # 24 hours
+# Drop Valkey messages older than this many seconds (0 = disabled, messages
+# are kept until trimmed by max_messages_per_topic)
+persistent_tier_retention = 0
 
 # Maximum messages to store per topic
 max_messages_per_topic = 1000000

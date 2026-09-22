@@ -13,7 +13,7 @@ class TestSettings:
         assert settings.app_name == "Pulsar Relay"
         assert settings.valkey_host == "localhost"
         assert settings.valkey_port == 6379
-        assert settings.persistent_tier_retention == 86400
+        assert settings.persistent_tier_retention == 0
         assert settings.max_messages_per_topic == 1000000
         # Note: http_port and workers removed - controlled by uvicorn CLI
 

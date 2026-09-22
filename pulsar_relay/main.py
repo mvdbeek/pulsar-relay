@@ -60,7 +60,7 @@ from pulsar_relay.core.idempotency import (
 from pulsar_relay.core.polling import PollManager
 from pulsar_relay.core.pubsub import PubSubCoordinator
 from pulsar_relay.storage.memory import MemoryStorage
-from pulsar_relay.storage.valkey import ValkeyStorage
+from pulsar_relay.storage.valkey import UnsafeEvictionPolicyError, ValkeyStorage
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +94,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             use_tls=settings.valkey_use_tls,
             username=settings.valkey_username,
             password=settings.valkey_password,
+            retention_seconds=settings.persistent_tier_retention,
         )
         assert isinstance(storage, ValkeyStorage)
         # Connect to Valkey
@@ -114,6 +115,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 "Migrate by FLUSHing the topic/stream/meta keys or by re-creating topics "
                 "under each owner. To bypass for local-dev set PULSAR_ALLOW_INSECURE_DEFAULTS=1."
             )
+            if settings.allow_insecure_defaults:
+                log.warning(msg)
+            else:
+                log.error(msg)
+                raise SystemExit(2)
+
+        # Users, topics, access grants and the JWT denylist live in the same
+        # Valkey as message streams; an evicting maxmemory-policy can silently
+        # delete them (and re-enable revoked tokens) under memory pressure.
+        try:
+            await storage.check_eviction_policy()
+        except UnsafeEvictionPolicyError as e:
+            msg = f"Refusing to start: {e} To bypass set PULSAR_ALLOW_INSECURE_DEFAULTS=1."
             if settings.allow_insecure_defaults:
                 log.warning(msg)
             else:

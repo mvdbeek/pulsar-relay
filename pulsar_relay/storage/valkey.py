@@ -1,7 +1,9 @@
 """Valkey-based storage backend using Streams."""
 
+import asyncio
 import json
 import logging
+import time
 from datetime import datetime
 from typing import Any, Optional, Union, cast
 
@@ -9,16 +11,23 @@ from glide import (
     ExclusiveIdBound,
     GlideClient,
     GlideClientConfiguration,
+    IdBound,
+    InfoSection,
     MaxId,
     MinId,
     NodeAddress,
     ServerCredentials,
     TrimByMaxLen,
+    TrimByMinId,
 )
 
 from pulsar_relay.storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
+
+
+class UnsafeEvictionPolicyError(RuntimeError):
+    """Valkey is configured with a maxmemory-policy that can evict relay state."""
 
 
 class ValkeyStorage(StorageBackend):
@@ -36,6 +45,7 @@ class ValkeyStorage(StorageBackend):
         use_tls: bool = False,
         username: Optional[str] = None,
         password: Optional[str] = None,
+        retention_seconds: int = 0,
     ):
         """Initialize Valkey storage backend.
 
@@ -48,18 +58,15 @@ class ValkeyStorage(StorageBackend):
                 requirepass authentication when ``password`` is supplied).
             password: Valkey password / ACL password. None disables AUTH —
                 only acceptable in test/dev configurations.
-
-        Note:
-            The previous ``ttl_seconds`` parameter was accepted but
-            never enforced (the stream keys never received an
-            ``EXPIRE``). It has been removed to avoid implying a
-            retention guarantee that did not exist. Retention is
-            bounded only by ``max_messages_per_topic`` via stream
-            trim. Closes Storage H#6.
+            retention_seconds: Drop messages older than this many seconds.
+                0 (the default) disables age-based retention, so streams are
+                bounded only by ``max_messages_per_topic`` and the latest
+                message of an idle topic stays readable indefinitely.
         """
         self.host = host
         self.port = port
         self.max_messages_per_topic = max_messages_per_topic
+        self.retention_seconds = retention_seconds
         self.use_tls = use_tls
         self.username = username
         self.password = password
@@ -99,6 +106,45 @@ class ValkeyStorage(StorageBackend):
             logger.error(f"Failed to connect to Valkey: {e}")
             raise
 
+    async def check_eviction_policy(self) -> None:
+        """Check that Valkey will never evict relay state under memory pressure.
+
+        Users, topics and access grants are stored without a TTL, and the
+        JWT denylist, refresh tokens and device codes with one, so any
+        eviction policy other than ``noeviction`` can delete them once
+        ``maxmemory`` is reached (evicting a denylist entry re-enables a
+        revoked token). With ``maxmemory 0`` nothing is ever evicted.
+
+        If the configuration cannot be read, a warning is logged and the
+        check passes.
+
+        Raises:
+            UnsafeEvictionPolicyError: If Valkey may evict keys.
+        """
+        if not self._client:
+            raise RuntimeError("Not connected to Valkey")
+
+        try:
+            info = await self._client.info([InfoSection.MEMORY])
+        except Exception as e:
+            logger.warning(f"Could not read Valkey memory info, unable to verify maxmemory-policy: {e}")
+            return
+
+        text = info.decode() if isinstance(info, bytes) else str(info)
+        fields = dict(line.split(":", 1) for line in text.splitlines() if ":" in line)
+        policy = fields.get("maxmemory_policy", "").strip()
+        maxmemory = fields.get("maxmemory", "").strip()
+        if not policy or not maxmemory.isdigit():
+            logger.warning("Valkey did not report maxmemory/maxmemory_policy, unable to verify it is safe")
+            return
+
+        if int(maxmemory) > 0 and policy != "noeviction":
+            raise UnsafeEvictionPolicyError(
+                f"Valkey maxmemory-policy is '{policy}' with maxmemory {maxmemory}: once the limit is "
+                "reached Valkey may evict users, topics, access grants and JWT denylist entries. "
+                "Set 'maxmemory-policy noeviction' (or 'maxmemory 0')."
+            )
+
     async def disconnect(self) -> None:
         """Disconnect from Valkey server."""
         if self._client:
@@ -120,6 +166,23 @@ class ValkeyStorage(StorageBackend):
         Returns ``meta:topic:{owner_id}/{topic}``.
         """
         return f"meta:topic:{owner_id}/{topic}"
+
+    def _retention_cutoff_ms(self) -> int:
+        """Oldest stream ID timestamp still within the retention window.
+
+        Stream IDs are ``<milliseconds>-<sequence>``, so the cutoff is the
+        current time minus ``retention_seconds``.
+        """
+        return max(int(time.time() * 1000) - self.retention_seconds * 1000, 0)
+
+    @staticmethod
+    def _parse_stream_id(stream_id: str) -> Optional[tuple[int, int]]:
+        """Parse a stream ID into (milliseconds, sequence), or None if malformed."""
+        ms, _, seq = stream_id.partition("-")
+        try:
+            return int(ms), int(seq or 0)
+        except ValueError:
+            return None
 
     async def save_message(
         self,
@@ -170,10 +233,23 @@ class ValkeyStorage(StorageBackend):
             # Trim stream to max length
             # Note: Using exact=True for predictable behavior. Approximate trimming
             # (exact=False) may not trim at all in some cases with Valkey GLIDE.
-            await self._client.xtrim(
+            trim = self._client.xtrim(
                 stream_key,
                 TrimByMaxLen(exact=True, threshold=self.max_messages_per_topic),
             )
+            if self.retention_seconds:
+                # Also drop entries older than the retention window, and expire
+                # the whole stream once the topic has been idle for that long
+                # (every entry would be stale by then).
+                await asyncio.gather(
+                    trim,
+                    self._client.xtrim(
+                        stream_key, TrimByMinId(exact=True, threshold=f"{self._retention_cutoff_ms()}-0")
+                    ),
+                    self._client.expire(stream_key, self.retention_seconds),
+                )
+            else:
+                await trim
 
             logger.debug(f"Saved message to topic {topic} with stream ID {message_id}")
 
@@ -196,6 +272,11 @@ class ValkeyStorage(StorageBackend):
             raise RuntimeError("Not connected to Valkey")
 
         stream_key = self._get_stream_key(owner_id, topic)
+        # With retention enabled, entries past the window are trimmed on the
+        # next write; skip them until then.
+        cutoff_ms = self._retention_cutoff_ms() if self.retention_seconds else 0
+        oldest: Union[MinId, IdBound] = IdBound(f"{cutoff_ms}-0") if cutoff_ms else MinId()
+        start_bound: Union[MinId, IdBound, ExclusiveIdBound]
 
         try:
             if reverse:
@@ -210,11 +291,16 @@ class ValkeyStorage(StorageBackend):
                     # End at the most recent message
                     end_bound = MaxId()
 
-                start_bound = MinId()  # Start from the beginning
+                start_bound = oldest
                 stream_entries = await self._client.xrevrange(stream_key, end=end_bound, start=start_bound, count=limit)
             else:
                 # Use XRANGE for forward order (oldest first)
-                start_bound = ExclusiveIdBound(since) if since else MinId()
+                since_id = self._parse_stream_id(since) if since else None
+                if since and (since_id is None or since_id >= (cutoff_ms, 0)):
+                    start_bound = ExclusiveIdBound(since)
+                else:
+                    # No cursor, or cursor older than the retention window
+                    start_bound = oldest
                 end_bound = MaxId()
                 stream_entries = await self._client.xrange(stream_key, start=start_bound, end=end_bound, count=limit)
 

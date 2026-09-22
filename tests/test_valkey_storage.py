@@ -10,9 +10,9 @@ from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from glide import ExclusiveIdBound, MaxId, MinId
+from glide import ExclusiveIdBound, IdBound, MaxId, MinId, TrimByMaxLen, TrimByMinId
 
-from pulsar_relay.storage.valkey import ValkeyStorage
+from pulsar_relay.storage.valkey import UnsafeEvictionPolicyError, ValkeyStorage
 
 OWNER = "u-test"
 
@@ -64,8 +64,10 @@ class TestValkeyStorage:
         assert json.loads(fields["payload"]) == {"data": "value"}
         assert json.loads(fields["metadata"]) == {"source": "test"}
 
-        # Verify xtrim was called
+        # Verify xtrim was called; retention is disabled by default, so no
+        # age-based trim and no EXPIRE on the stream
         valkey_storage._client.xtrim.assert_called_once()
+        valkey_storage._client.expire.assert_not_called()
 
     @pytest.mark.anyio
     async def test_save_message_without_metadata(self, valkey_storage):
@@ -313,6 +315,111 @@ class TestValkeyStorage:
         assert alice_key != bob_key
         assert "alice" in alice_key
         assert "bob" in bob_key
+
+
+NOW = 1767225600.0  # 2026-01-01T00:00:00Z
+CUTOFF_ID = "1767222000000-0"  # NOW - 3600s
+
+
+@pytest.fixture
+async def retention_storage():
+    """ValkeyStorage with a one-hour retention window and a mocked client."""
+    storage = ValkeyStorage(host="localhost", port=6379, max_messages_per_topic=10000, retention_seconds=3600)
+    storage._client = AsyncMock()
+    storage._connected = True
+    with patch("pulsar_relay.storage.valkey.time.time", return_value=NOW):
+        yield storage
+
+
+class TestRetention:
+    """Age-based retention (opt-in via ``persistent_tier_retention``)."""
+
+    @pytest.mark.anyio
+    async def test_save_message_trims_old_entries_and_expires_stream(self, retention_storage):
+        retention_storage._client.xadd = AsyncMock(return_value=b"1767225600000-0")
+
+        await retention_storage.save_message(OWNER, "t", payload={}, timestamp=datetime(2026, 1, 1))
+
+        trims = {type(c[0][1]): c[0][1] for c in retention_storage._client.xtrim.call_args_list}
+        assert trims[TrimByMinId].threshold == CUTOFF_ID
+        assert trims[TrimByMaxLen].threshold == 10000
+        retention_storage._client.expire.assert_called_once_with(f"stream:topic:{OWNER}/t", 3600)
+
+    @pytest.mark.anyio
+    async def test_get_messages_starts_at_cutoff(self, retention_storage):
+        retention_storage._client.xrange = AsyncMock(return_value={})
+
+        await retention_storage.get_messages(OWNER, "t", limit=5)
+
+        start = retention_storage._client.xrange.call_args[1]["start"]
+        assert isinstance(start, IdBound)
+        assert start.to_arg() == CUTOFF_ID
+
+    @pytest.mark.anyio
+    async def test_recent_cursor_is_kept(self, retention_storage):
+        retention_storage._client.xrange = AsyncMock(return_value={})
+
+        await retention_storage.get_messages(OWNER, "t", since="1767225000000-0", limit=5)
+
+        start = retention_storage._client.xrange.call_args[1]["start"]
+        assert isinstance(start, ExclusiveIdBound)
+        assert start.to_arg() == "(1767225000000-0"
+
+    @pytest.mark.anyio
+    async def test_cursor_older_than_retention_starts_at_cutoff(self, retention_storage):
+        retention_storage._client.xrange = AsyncMock(return_value={})
+
+        await retention_storage.get_messages(OWNER, "t", since="1234567890120-0", limit=5)
+
+        assert retention_storage._client.xrange.call_args[1]["start"].to_arg() == CUTOFF_ID
+
+    @pytest.mark.anyio
+    async def test_reverse_stops_at_cutoff(self, retention_storage):
+        retention_storage._client.xrevrange = AsyncMock(return_value={})
+
+        await retention_storage.get_messages(OWNER, "t", limit=5, reverse=True)
+
+        call_args = retention_storage._client.xrevrange.call_args
+        assert isinstance(call_args[1]["end"], MaxId)
+        assert call_args[1]["start"].to_arg() == CUTOFF_ID
+
+
+def _memory_info(policy: str, maxmemory: int) -> bytes:
+    return f"# Memory\r\nused_memory:1024\r\nmaxmemory:{maxmemory}\r\nmaxmemory_policy:{policy}\r\n".encode()
+
+
+class TestEvictionPolicyCheck:
+    """The startup check that Valkey will never evict relay state."""
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("policy", ["allkeys-lru", "allkeys-lfu", "allkeys-random", "volatile-lru", "volatile-ttl"])
+    async def test_evicting_policy_with_maxmemory_is_rejected(self, valkey_storage, policy):
+        valkey_storage._client.info = AsyncMock(return_value=_memory_info(policy, 8 * 1024**3))
+
+        with pytest.raises(UnsafeEvictionPolicyError, match=policy):
+            await valkey_storage.check_eviction_policy()
+
+    @pytest.mark.anyio
+    async def test_noeviction_is_safe(self, valkey_storage):
+        valkey_storage._client.info = AsyncMock(return_value=_memory_info("noeviction", 8 * 1024**3))
+
+        await valkey_storage.check_eviction_policy()
+
+    @pytest.mark.anyio
+    async def test_unlimited_memory_is_safe(self, valkey_storage):
+        """With ``maxmemory 0`` Valkey never evicts, whatever the policy."""
+        valkey_storage._client.info = AsyncMock(return_value=_memory_info("allkeys-lru", 0))
+
+        await valkey_storage.check_eviction_policy()
+
+    @pytest.mark.anyio
+    async def test_unreadable_info_warns_without_failing(self, valkey_storage, caplog):
+        valkey_storage._client.info = AsyncMock(side_effect=Exception("NOPERM"))
+
+        with caplog.at_level("WARNING"):
+            await valkey_storage.check_eviction_policy()
+
+        assert any(r.levelname == "WARNING" for r in caplog.records)
 
 
 @pytest.mark.integration

@@ -328,7 +328,7 @@ storage_backend: valkey
 valkey_host: localhost
 valkey_port: 6379
 valkey_use_tls: false
-persistent_tier_retention: 86400   # seconds; Valkey stream retention
+persistent_tier_retention: 0       # seconds; 0 = keep until trimmed by count
 max_messages_per_topic: 1000000    # per-topic trim threshold
 log_level: INFO
 jwt_secret_key: your-secure-secret-key-here
@@ -389,13 +389,17 @@ Key configuration for optimal performance:
 ```conf
 # valkey.conf
 maxmemory 8gb
-maxmemory-policy allkeys-lru
+maxmemory-policy noeviction  # Required: users, topics and auth state live here too
 appendonly yes
 appendfsync everysec  # Balance between durability and performance
 save 900 1
 save 300 10
 save 60 10000
 ```
+
+Valkey stores users, topics, access grants and auth state as well as messages,
+so `maxmemory-policy` must be `noeviction`; the relay refuses to start otherwise.
+See [Valkey Requirements](docs/CONFIGURATION.md#valkey-requirements).
 
 ## Security
 

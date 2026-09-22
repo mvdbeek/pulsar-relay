@@ -87,9 +87,39 @@ All environment variables are prefixed with `PULSAR_`:
 - `PULSAR_VALKEY_PORT` - Valkey server port (default: 6379)
 - `PULSAR_VALKEY_USE_TLS` - Use TLS for Valkey (default: false)
 
+### What Valkey Stores
+
+With `PULSAR_STORAGE_BACKEND=valkey`, Valkey is the system of record for **all**
+relay state, not only messages:
+
+| Data | Keys | TTL |
+|------|------|-----|
+| Users and login indexes | `user:{id}`, `user:username_index`, `user:fed_index` | none |
+| Topics and access grants | `topic:{owner_id}/{name}`, `user:{id}:owned_topics` | none |
+| Messages | `stream:topic:{owner_id}/{name}` | only with `PULSAR_PERSISTENT_TIER_RETENTION` |
+| Refresh tokens | `refresh:tok:{jti}`, `refresh:user:{id}` | token lifetime |
+| JWT denylist (logged-out tokens) | `denylist:jti:{jti}` | token lifetime |
+| Device / OIDC login flows | `device:*`, `oidc:state:*` | flow lifetime |
+| Idempotency keys | `idem:{owner_id}/{key}` | 10 minutes |
+
+### Valkey Requirements
+
+- **`maxmemory-policy` must be `noeviction`** (or leave `maxmemory` at `0`).
+  `allkeys-*` policies can evict users, topics and access grants; `volatile-*`
+  policies can evict JWT denylist entries, which re-enables revoked tokens. At
+  startup the relay reads `INFO memory` and refuses to start if `maxmemory` is
+  set with any other policy (bypass with `PULSAR_ALLOW_INSECURE_DEFAULTS=1`).
+  Managed Valkey/Redis services often default to `volatile-lru`, so check yours.
+- **Size `maxmemory` for your message volume.** With `noeviction`, writes fail
+  once the limit is hit, so publishing returns errors instead of state being
+  lost. Each stream holds at most `PULSAR_MAX_MESSAGES_PER_TOPIC` entries (and
+  only `PULSAR_PERSISTENT_TIER_RETENTION` seconds' worth, if set).
+- **Enable persistence** (AOF and/or RDB, as in the bundled `valkey.conf`),
+  otherwise a Valkey restart loses all users and topics.
+
 ### Storage Settings
 
-- `PULSAR_PERSISTENT_TIER_RETENTION` - Persistent tier retention in seconds (default: 86400)
+- `PULSAR_PERSISTENT_TIER_RETENTION` - Drop messages older than this many seconds (default: 0, disabled). When set, every publish trims entries older than the window and sets an expiry on the topic's stream, so a topic idle for that long is removed; older messages are never returned by the API. Leave at 0 if consumers need the latest message of an idle topic regardless of age.
 - `PULSAR_MAX_MESSAGES_PER_TOPIC` - Maximum messages per topic (default: 1000000)
 
 ### Logging
