@@ -114,8 +114,65 @@ relay state, not only messages:
   once the limit is hit, so publishing returns errors instead of state being
   lost. Each stream holds at most `PULSAR_MAX_MESSAGES_PER_TOPIC` entries (and
   only `PULSAR_PERSISTENT_TIER_RETENTION` seconds' worth, if set).
-- **Enable persistence** (AOF and/or RDB, as in the bundled `valkey.conf`),
-  otherwise a Valkey restart loses all users and topics.
+- **Enable both AOF and RDB persistence** and keep the data directory on a
+  persistent volume; see [Persistence and Backups](#persistence-and-backups).
+
+### Persistence and Backups
+
+Use **both** persistence modes, as the bundled `valkey.conf` does:
+
+- **AOF with `appendfsync everysec`** for durability: a crash or restart loses
+  at most about one second of writes. `appendfsync always` is not needed.
+- **RDB snapshots** (`save ...`) for backups: a single compact file that is
+  easy to copy off the host.
+
+**RDB alone is not enough.** After a crash Valkey restarts from the last
+snapshot, which may be minutes old. For the relay that means users, topics and
+grants created since then are gone, revoked (logged-out) JWTs become valid
+again because their denylist entries are lost, refresh tokens that were already
+rotated can be used again, and Pulsar/Galaxy messages published in that window
+are lost.
+
+The data directory (`dir`, `/data` in the Docker image) holds `appendonlydir/`
+(the AOF) and `dump.rdb`. Mount it on a named or host volume: without one,
+recreating the container deletes all relay state.
+
+#### Backing up
+
+Take an RDB snapshot and copy it off the host:
+
+```bash
+valkey-cli -a "$PULSAR_VALKEY_PASSWORD" BGSAVE
+# wait until rdb_bgsave_in_progress:0 (and rdb_last_bgsave_status:ok)
+valkey-cli -a "$PULSAR_VALKEY_PASSWORD" INFO persistence | grep rdb_
+cp /data/dump.rdb /backups/pulsar-relay-$(date +%F).rdb
+```
+
+#### Restoring
+
+With `appendonly yes`, Valkey loads **only** the AOF at startup and ignores
+`dump.rdb`. If there is no AOF directory it starts with an **empty** dataset
+and immediately writes an empty AOF. Simply copying a backup to
+`/data/dump.rdb` therefore does not restore anything. Instead:
+
+1. Stop the relay and Valkey.
+2. Move `/data/appendonlydir` out of the way and copy the backup to
+   `/data/dump.rdb`.
+3. Start Valkey once with AOF disabled, so it loads the snapshot, and rebuild
+   the AOF from it:
+   ```bash
+   valkey-server /etc/valkey/valkey.conf --appendonly no --requirepass "$PULSAR_VALKEY_PASSWORD" &
+   valkey-cli -a "$PULSAR_VALKEY_PASSWORD" DBSIZE          # should match the backup
+   valkey-cli -a "$PULSAR_VALKEY_PASSWORD" BGREWRITEAOF
+   # wait until aof_rewrite_in_progress:0
+   valkey-cli -a "$PULSAR_VALKEY_PASSWORD" INFO persistence | grep aof_rewrite
+   kill %1   # SIGTERM; SHUTDOWN is disabled in the bundled valkey.conf
+   ```
+4. Start Valkey and the relay normally (AOF enabled).
+
+Anything written after the backup was taken is lost, including logouts. Revoked
+tokens become usable again until they expire, so consider rotating
+`PULSAR_JWT_SECRET_KEY` after a restore.
 
 ### Storage Settings
 

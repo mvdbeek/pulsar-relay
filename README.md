@@ -13,7 +13,7 @@ A message relay system for real-time message delivery to clients via WebSocket a
 
 ### Prerequisites
 
-- Valkey (or Redis 7+) with AOF/RDB persistence enabled
+- Valkey (or Redis 7+) with both AOF and RDB persistence enabled (see [Persistence and Backups](docs/CONFIGURATION.md#persistence-and-backups))
 - Docker (optional)
 
 ### Installation
