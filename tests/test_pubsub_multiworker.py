@@ -261,65 +261,73 @@ class TestMultiWorkerPubSub:
 
     @pytest.mark.anyio
     @pytest.mark.parametrize("real_server", [{"workers": 3, "storage_backend": "valkey"}], indirect=True)
-    async def test_pubsub_coordinator_with_long_polling(self, real_server):
+    @pytest.mark.parametrize("poll_start_delay", [0, 0.3])
+    async def test_pubsub_coordinator_with_long_polling(self, real_server, poll_start_delay):
         """Test that pub/sub also broadcasts to long-polling clients across workers."""
         base_url = real_server["base_url"]
         username = real_server["username"]
         password = real_server["password"]
 
-        # Login
         async with httpx.AsyncClient() as client:
             response = await client.post(f"{base_url}/auth/login", data={"username": username, "password": password})
+            assert response.status_code == 200, response.text
             token = response.json()["access_token"]
 
         topic = "polling-multiworker-test"
-
-        # Start multiple long-polling clients in background
-        poll_results = [None, None, None]
+        headers = {"Authorization": f"Bearer {token}"}
+        readiness_topics = [f"{topic}-client-{i}" for i in range(3)]
 
         async def poll_client(client_id: int):
-            """Long-polling client that waits for messages."""
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                try:
-                    response = await client.post(
-                        f"{base_url}/messages/poll",
-                        json={"topics": [topic], "timeout": 10},
-                        headers={"Authorization": f"Bearer {token}"},
+            # Exercise clients arriving after the old 100 ms publish delay.
+            await asyncio.sleep(client_id * poll_start_delay)
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(
+                    f"{base_url}/messages/poll",
+                    json={"topics": [topic, readiness_topics[client_id]], "timeout": 10},
+                    headers=headers,
+                )
+                assert response.status_code == 200, response.text
+                return response.json()["messages"]
+
+        async def wait_for_poll_clients():
+            # Stats are local to each worker. Give each waiter a distinct
+            # topic and use fresh connections to observe waiters across workers.
+            # A sleep (or merely sending the requests) cannot establish that
+            # the server has registered the waiters before we publish.
+            ready = set()
+            async with httpx.AsyncClient(headers=headers, limits=httpx.Limits(max_keepalive_connections=0)) as client:
+                while not set(readiness_topics).issubset(ready):
+                    response = await client.get(f"{base_url}/messages/poll/stats")
+                    assert response.status_code == 200, response.text
+                    ready.update(
+                        channel.split("/", 1)[1]
+                        for channel, count in response.json()["topic_subscriber_counts"].items()
+                        if count > 0
                     )
-                    if response.status_code == 200:
-                        data = response.json()
-                        poll_results[client_id] = data.get("messages", [])
-                        print(f"Poll client {client_id}: Received {len(poll_results[client_id])} messages")
-                except Exception as e:
-                    print(f"Poll client {client_id}: Error: {e}")
+                    await asyncio.sleep(0.01)
 
-        # Start polling clients
         poll_tasks = [asyncio.create_task(poll_client(i)) for i in range(3)]
+        try:
+            await asyncio.wait_for(wait_for_poll_clients(), timeout=5.0)
 
-        # Give them time to connect
-        await asyncio.sleep(0.1)
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{base_url}/api/v1/messages",
+                    json={"topic": topic, "payload": {"test": "polling-broadcast"}},
+                    headers=headers,
+                )
+                assert response.status_code == 201, response.text
+                message_id = response.json()["message_id"]
 
-        # Publish a message
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{base_url}/api/v1/messages",
-                json={"topic": topic, "payload": {"test": "polling-broadcast"}},
-                headers={"Authorization": f"Bearer {token}"},
-            )
-            assert response.status_code == 201
-            message_id = response.json()["message_id"]
-            print(f"Published message {message_id}")
-
-        # Wait for poll clients to receive
-        await asyncio.gather(*poll_tasks, return_exceptions=True)
-
-        # Verify at least some clients received the message
-        received_count = sum(1 for result in poll_results if result and len(result) > 0)
-        print(f"Poll results: {poll_results}")
-
-        assert received_count >= 2, f"Only {received_count}/3 poll clients received the message via pub/sub"
-
-        print("✓ Long-polling clients received messages via pub/sub")
+            poll_results = await asyncio.gather(*poll_tasks)
+            for result in poll_results:
+                assert [message["message_id"] for message in result] == [message_id]
+                assert result[0]["topic"] == topic
+                assert result[0]["payload"] == {"test": "polling-broadcast"}
+        finally:
+            for task in poll_tasks:
+                task.cancel()
+            await asyncio.gather(*poll_tasks, return_exceptions=True)
 
     @pytest.mark.anyio
     @pytest.mark.parametrize("real_server", [{"workers": 3, "storage_backend": "valkey"}], indirect=True)
